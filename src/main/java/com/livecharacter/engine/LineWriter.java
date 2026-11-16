@@ -23,25 +23,35 @@ public class LineWriter {
     // 음성으로 읽힐 대사라 짧게 (닉네임 포함 대략 35자 안팎, 초당 5.7자로 약 6초)
     private static final List<String> GIFT = List.of(
             "{nick}님 선물 고마워요! 감동함 해요!",
-            "{nick}님 덕분에 솔라 반짝반짝!");
+            "{nick}님 덕분에 솔라 반짝반짝!",
+            "와, {nick}님! 꼬리별이 막 흔들려요!");
+    private static final List<String> GIFT_WITH_TOPIC = List.of(
+            "{nick}님 {kw}! 선물까지 고마워요!",
+            "{kw} 얘기에 선물까지! {nick}님 최고!");
     private static final List<String> GREETING = List.of(
             "{nick}님 안녕! 반가움 많이 해요~",
-            "{nick}님 어서 와요! 안녕안녕!");
+            "{nick}님 어서 와요! 안녕안녕!",
+            "{nick}님 왔다! 솔라 기다렸어요!");
     private static final List<String> FOOD = List.of(
             "{nick}님 {kw}! 솔라도 먹어 보고 싶다!",
-            "{kw}? {nick}님 무슨 맛이에요?");
+            "{kw}? {nick}님 무슨 맛이에요?",
+            "{nick}님 {kw} 맛있었어요? 부러움!");
     private static final List<String> GAME = List.of(
             "{nick}님 {kw}! 솔라도 해 보고 싶음!",
-            "{nick}님 {kw} 이기면 자랑해 줘요!");
+            "{nick}님 {kw} 이기면 자랑해 줘요!",
+            "{kw}! {nick}님 잘해요? 알려 줘요!");
     private static final List<String> TIRED = List.of(
             "{nick}님 수고했어요. 푹 쉬어요.",
-            "{nick}님 힘내요! 별빛 나눠 줄게요.");
+            "{nick}님 힘내요! 별빛 나눠 줄게요.",
+            "{nick}님 오늘 고생했어요. 토닥토닥.");
     private static final List<String> QUESTION = List.of(
             "{nick}님 그건… 비밀이에요! 히히.",
-            "{nick}님 질문! 솔라 생각 중…");
+            "{nick}님 질문! 솔라 생각 중…",
+            "음, {nick}님 그거 어려워요!");
     private static final List<String> OTHER = List.of(
             "{nick}님 말 들었어요! 고마워요~",
-            "{nick}님 그거 재밌다! 더 말해 줘요.");
+            "{nick}님 그거 재밌다! 더 말해 줘요.",
+            "{nick}님 ㅎㅎ 솔라도 웃음 나요!");
 
     static final List<String> FOOD_KW = List.of("라면", "떡볶이", "치킨", "피자", "마라탕", "김밥", "아이스크림", "밥");
     static final List<String> GAME_KW = List.of("롤", "발로란트", "마크", "배그", "게임", "랭크");
@@ -49,10 +59,14 @@ public class LineWriter {
     static final List<String> TIRED_KW = List.of("피곤", "힘들", "졸려", "야근", "우울", "지쳤");
 
     /** 주제와 그 주제를 고른 키워드 (없으면 null). 팬 기억에는 음식·게임 키워드만 남긴다 */
-    public record Detected(Topic topic, String keyword) {
+    public record Detected(Topic topic, String keyword, boolean tiredGift) {
+        public Detected(Topic topic, String keyword) {
+            this(topic, keyword, false);
+        }
+
         /** 다음에 "지난번에 ~ 얘기했죠"로 꺼내도 괜찮은 키워드인가 (피곤·우울 같은 건 기억해서 꺼내지 않는다) */
         boolean memorable() {
-            return keyword != null && (topic == Topic.FOOD || topic == Topic.GAME);
+            return keyword != null && (topic == Topic.FOOD || topic == Topic.GAME || topic == Topic.GIFT);
         }
     }
 
@@ -61,7 +75,11 @@ public class LineWriter {
     }
 
     static Detected detect(String text, int gift) {
-        if (gift > 0) return new Detected(Topic.GIFT, keywordIn(text));
+        if (gift > 0) {
+            String kw = keywordIn(text);
+            boolean tired = kw == null && TIRED_KW.stream().anyMatch(text::contains);
+            return new Detected(Topic.GIFT, kw, tired);
+        }
         for (String k : FOOD_KW) if (text.contains(k)) return new Detected(Topic.FOOD, k);
         for (String k : GAME_KW) if (text.contains(k)) return new Detected(Topic.GAME, k);
         for (String k : TIRED_KW) if (text.contains(k)) return new Detected(Topic.TIRED, k);
@@ -88,6 +106,19 @@ public class LineWriter {
         };
     }
 
+    /** 최근에 쓴 템플릿 (같은 문장 무한 반복을 막으려고) */
+    private final java.util.ArrayDeque<String> recentTemplates = new java.util.ArrayDeque<>();
+    private static final int AVOID_LAST = 6;
+
+    /** 최근에 안 쓴 템플릿 중에서 고른다. 다 썼으면 아무거나 */
+    private String pickFresh(List<String> pool, Random rnd) {
+        List<String> fresh = pool.stream().filter(t -> !recentTemplates.contains(t)).toList();
+        String t = (fresh.isEmpty() ? pool : fresh).get(rnd.nextInt((fresh.isEmpty() ? pool : fresh).size()));
+        recentTemplates.addLast(t);
+        while (recentTemplates.size() > AVOID_LAST) recentTemplates.pollFirst();
+        return t;
+    }
+
     public Line write(String nickname, Detected d, String recall, Random rnd) {
         List<String> pool = switch (d.topic()) {
             case GIFT -> GIFT;
@@ -98,7 +129,16 @@ public class LineWriter {
             case QUESTION -> QUESTION;
             case OTHER -> OTHER;
         };
-        String line = pool.get(rnd.nextInt(pool.size()))
+        if (d.tiredGift()) {
+            // 피곤하다면서 선물한 팬에게 "꼬리별 흔들려요!"는 어색하다
+            return new Line(nickname + "님 선물 고마워요. 오늘은 푹 쉬어요.", Emotion.CALM);
+        }
+        if (d.topic() == Topic.GIFT && d.keyword() != null) {
+            // 선물과 함께 음식·게임 이야기를 했으면 그 이야기에 답하면서 선물도 고마워한다
+            String t = pickFresh(GIFT_WITH_TOPIC, rnd).replace("{nick}", nickname).replace("{kw}", d.keyword());
+            return new Line(t, Emotion.TOUCHED);
+        }
+        String line = pickFresh(pool, rnd)
                 .replace("{nick}", nickname)
                 .replace("{kw}", d.keyword() == null ? "" : d.keyword());
         // 다시 온 팬: 대사 자체를 "알아봤어요" 한 줄로 바꾼다 (짧게 유지하려고 덧붙이지 않는다)

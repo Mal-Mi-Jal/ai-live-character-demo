@@ -38,6 +38,10 @@
   .tag.llm { background:#3b2f6b; color:#cdbfff; }
   .tag.mem { background:#2f4a3b; color:#b5f0cc; }
   .tag.group { background:#4a3a1a; color:#ffe1a1; }
+  .tag.ask { background:#1f3f55; color:#a9e1ff; }
+  .topic { margin-top:10px; padding:8px 12px; border-radius:10px; background:#2a2640; font-size:13px; color:var(--muted); }
+  .topic b { color:var(--text); }
+  .topic.asking { background:#1f3f55; color:#cfeeff; }
   #history div { font-size:13px; padding:4px 0; border-bottom:1px dashed var(--line); color:var(--muted); overflow-wrap:anywhere; }
   #history b { color:var(--text); font-weight:600; }
   /* 채팅 */
@@ -76,6 +80,7 @@
             <div class="bar"><i id="bar"></i></div>
           </div>
         </div>
+        <div class="topic" id="topic">지금 이야기: 자유롭게 채팅 읽는 중</div>
         <div class="acks" id="acks"></div>
         <div class="muted">❤ = 목소리 대신 화면에 이름을 띄워 "봤어요"를 알리는 팬</div>
       </div>
@@ -234,8 +239,33 @@ function addHistory(nodes) {
   box.prepend(d); while (box.childElementCount > 8) box.lastElementChild.remove();
 }
 
+// 지금 이야기 (진행자 상태). 질문 중이면 남은 시간을 1초마다 줄인다
+let topicEnd = 0, topicState = null;
+function renderTopic(st) {
+  topicState = st; topicEnd = st && st.remainingMs ? Date.now() + st.remainingMs : 0;
+  drawTopic();
+}
+function drawTopic() {
+  const box = $("topic"), st = topicState;
+  if (!st || !st.topic) { box.className = "topic"; box.textContent = "지금 이야기: 자유롭게 채팅 읽는 중"; return; }
+  const left = Math.max(0, Math.ceil((topicEnd - Date.now()) / 1000));
+  box.className = "topic" + (st.asking ? " asking" : "");
+  box.replaceChildren(document.createTextNode("지금 이야기: "), el("b", null, st.topic),
+    document.createTextNode(st.asking ? ` · 질문하고 답 모으는 중 (${left}초 남음) — 답한 채팅에 먼저 반응해요` : ` · 이 주제 채팅을 먼저 봐요 (${left}초)`));
+}
+setInterval(drawTopic, 1000);
+
 function renderSpeak(t) {
-  if (t.kind === "opening") {
+  renderTopic(t.topic);
+  if (t.kind === "ask") {
+    showLine([el("span", "tag ask", `질문 · ${t.group.label}`), document.createTextNode(" 솔라가 채팅방에 물어봐요")], t.group.line, "🤔", false, t.speakMs);
+    $("acks").replaceChildren();
+    addHistory([el("b", null, "[질문] "), document.createTextNode(t.group.line)]);
+  } else if (t.kind === "answers") {
+    showLine([el("span", "tag ask", `답 모아 반응 · ${t.group.count}명 답함`), document.createTextNode(` ${t.group.label}`)], t.group.line, "🤩", false, t.speakMs);
+    $("acks").replaceChildren();
+    addHistory([el("b", null, `[답 ${t.group.count}명] `), document.createTextNode(t.group.line)]);
+  } else if (t.kind === "opening") {
     showLine([el("span", "tag group", `라이브 ${t.stats.liveNo} 오프닝 · 지난 라이브 요약`)], t.group.line, "🥹", false, t.speakMs);
     $("acks").replaceChildren();
     addHistory([el("b", null, `[라이브 ${t.stats.liveNo} 시작] `), document.createTextNode(t.group.line)]);

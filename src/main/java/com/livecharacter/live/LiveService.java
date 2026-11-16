@@ -1,6 +1,7 @@
 package com.livecharacter.live;
 
 import com.livecharacter.engine.Chat;
+import com.livecharacter.engine.Director;
 import com.livecharacter.engine.LiveRoom;
 import com.livecharacter.engine.PickRule;
 import com.livecharacter.llm.HaikuLineWriter;
@@ -61,7 +62,8 @@ public class LiveService {
      */
     public record SpeakView(int turn, String kind, LiveRoom.Reaction reaction, LiveRoom.GroupMoment group,
                             List<LiveRoom.Ack> screenAcks, long speakMs, long llmMs, LiveRoom.Stats stats,
-                            String ruleLabel, int bots, LlmView llm, VoiceView voice, LiveRoom.ReturnStats returns) {
+                            String ruleLabel, int bots, LlmView llm, VoiceView voice, LiveRoom.ReturnStats returns,
+                            Director.Status topic) {
     }
 
     private static final Set<Integer> ALLOWED_BOTS = Set.of(0, 100, 300, 1000);
@@ -94,6 +96,8 @@ public class LiveService {
     private volatile BotAudience audience;
     private volatile PickRule rule = PickRule.FAIR;
     private volatile LiveRoom.LiveSummary lastLive;
+    /** 다음 차례에 무엇을 할지 정하는 진행자 (떡밥 → 질문 → 답 모으기 → 정리 → 주제 이어 가기) */
+    private volatile Director director = new Director();
     /** 다음 라이브 첫 차례에 말할 오프닝 (지난 라이브 요약) */
     private volatile String pendingOpening;
     private ScheduledExecutorService scheduler;
@@ -199,25 +203,40 @@ public class LiveService {
             LiveRoom.GroupMoment g = new LiveRoom.GroupMoment(s.topLabel() == null ? "지난 라이브" : s.topLabel(),
                     s.topCount(), List.of(), opening);
             template.convertAndSend("/topic/speak", new SpeakView(turnNo, "opening", null, g, List.of(),
-                    ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats()));
+                    ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
             scheduleTurn(ms);
             return;
         }
-        if (groupEvery > 0 && turnNo % groupEvery == 0) {
+        Director d = director;
+        boolean groupTurn = groupEvery > 0 && turnNo % groupEvery == 0;
+        Director.Plan plan = d.next(now, room.hotTopics(now), groupTurn);
+
+        if (plan.kind() == Director.Kind.ASK) {
+            String line = d.startAsk(plan.question(), plan.preface(), now);
+            audience.answering(plan.question().botAnswers()); // 데모 봇도 질문에 답하게
+            speakSpecial(turnNo, "ask", new LiveRoom.GroupMoment(plan.question().label(), 0, List.of(), line), ruleLabel, bots);
+            return;
+        }
+        if (plan.kind() == Director.Kind.ANSWERS) {
+            Director.Answers a = d.finishAsk(room.recentChats(), room.voiceCalled(), now);
+            audience.answering(null);
+            room.ackAnswers(a.answerers()); // 답한 팬은 "답 모아 반응"으로 함께 인정
+            String label = a.counts().entrySet().stream().map(e -> e.getKey() + " " + e.getValue())
+                    .reduce((x, y) -> x + " · " + y).orElse("답 없음");
+            speakSpecial(turnNo, "answers", new LiveRoom.GroupMoment(label, a.total(), List.of(), a.line()), ruleLabel, bots);
+            return;
+        }
+        if (plan.kind() == Director.Kind.GROUP) {
             LiveRoom.GroupMoment g = room.groupMoment(now);
             if (g != null) {
-                long ms = speakMs(g.line());
                 synchronized (statsLock) {
-                    turns++;
                     groupTurns++;
                 }
-                template.convertAndSend("/topic/speak", new SpeakView(turnNo, "group", null, g, List.of(),
-                        ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats()));
-                scheduleTurn(ms);
+                speakSpecial(turnNo, "group", g, ruleLabel, bots);
                 return;
             }
         }
-        LiveRoom.TickResult r = room.tick(now);
+        LiveRoom.TickResult r = room.tick(now, plan.prefer());
         if (r.reactions().isEmpty()) {
             scheduleTurn(IDLE_MS);
             return;
@@ -237,9 +256,21 @@ public class LiveService {
                     }
                     record(res);
                     template.convertAndSend("/topic/speak", new SpeakView(turnNo, "fan", x, null, r.screenAcks(),
-                            ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats()));
+                            ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
                     scheduleTurn(ms);
                 });
+    }
+
+    /** 질문·답 정리·묶음 인정처럼 한 사람에게 하는 말이 아닌 차례 (템플릿, LLM 안 씀) */
+    private void speakSpecial(int turnNo, String kind, LiveRoom.GroupMoment g, String ruleLabel, int bots) {
+        long ms = speakMs(g.line());
+        synchronized (statsLock) {
+            turns++;
+        }
+        template.convertAndSend("/topic/speak", new SpeakView(turnNo, kind, null, g, List.of(),
+                ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(),
+                director.status(System.currentTimeMillis())));
+        scheduleTurn(ms);
     }
 
     private void record(HaikuLineWriter.Result res) {
@@ -294,6 +325,8 @@ public class LiveService {
      */
     public synchronized void nextLive() {
         lastLive = room.startNextLive();
+        director = new Director();
+        audience.answering(null);
         pendingOpening = lastLive.openingLine();
         synchronized (statsLock) {
             voiceStarts.clear();
@@ -309,6 +342,7 @@ public class LiveService {
         if (ruleId != null) rule = PickRule.byId(ruleId);
         if (bots != null && ALLOWED_BOTS.contains(bots)) audience = new BotAudience(bots, seed);
         room.reset(rule);
+        director = new Director();
         synchronized (statsLock) {
             voiceStarts.clear();
             turns = 0;

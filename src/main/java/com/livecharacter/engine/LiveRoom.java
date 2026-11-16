@@ -95,6 +95,9 @@ public class LiveRoom {
     private List<Chat> pending = new ArrayList<>();
     /** 아직 반응 못 받은 최근 채팅 (시청자당 한 줄) */
     private Map<String, Chat> unanswered = new LinkedHashMap<>();
+    /** 최근 RECENT_MS 동안의 채팅 (금칙어 제외) — 떡밥 찾기, 질문의 답 세기 */
+    private java.util.ArrayDeque<Chat> recent = new java.util.ArrayDeque<>();
+    public static final long RECENT_MS = 60_000;
     /** 다음 채팅창 전송 때 내보낼 채팅 */
     private List<Chat> unflushed = new ArrayList<>();
     private long seq;
@@ -147,6 +150,8 @@ public class LiveRoom {
             } else {
                 pending.add(c);
                 ledger.onChat(c);
+                recent.addLast(c);
+                while (!recent.isEmpty() && nowMs - recent.peekFirst().receivedAtMs() > RECENT_MS) recent.pollFirst();
                 LineWriter.Detected d = LineWriter.detect(c.text(), c.gift());
                 if (d.memorable()) memory.remember(viewerId, d.keyword(), nowMs);
                 String label = groupLabel(d);
@@ -171,6 +176,14 @@ public class LiveRoom {
     }
 
     public TickResult tick(long nowMs) {
+        return tick(nowMs, null);
+    }
+
+    /**
+     * @param prefer 진행자가 "지금은 이런 채팅에 먼저 답하자"고 정한 조건 (질문의 답, 지금 주제).
+     *               목소리 후보 중 맞는 채팅이 있으면 그중에서만 고른다. 없으면 평소대로
+     */
+    public TickResult tick(long nowMs, java.util.function.Predicate<Chat> prefer) {
         lock.lock();
         try {
             tickNo++;
@@ -198,6 +211,15 @@ public class LiveRoom {
             for (Chat c : pool) if (nowMs - c.receivedAtMs() <= voiceMaxAgeMs) voicePool.add(c);
             List<Chat> voiceFresh = new ArrayList<>();
             for (Chat c : fresh) if (nowMs - c.receivedAtMs() <= voiceMaxAgeMs) voiceFresh.add(c);
+            if (prefer != null) {
+                List<Chat> pf = voicePool.stream().filter(prefer).toList();
+                if (!pf.isEmpty()) {
+                    voicePool = new ArrayList<>(pf);
+                    List<Chat> ff = voiceFresh.stream().filter(prefer).toList();
+                    // A/B 규칙은 fresh만 보므로, 맞는 채팅이 이번 틱에 없으면 pool에서 가져온다
+                    voiceFresh = new ArrayList<>(ff.isEmpty() ? pf : ff);
+                }
+            }
             List<Chat> picked = rule.pick(new PickRule.Context(voiceFresh, voicePool, ledger, k, rnd, nowMs));
 
             // 목소리로 고른 사람은 화면 후보에서 뺀다 (선물을 합친 복사본일 수 있어서 id로 비교)
@@ -220,9 +242,10 @@ public class LiveRoom {
                 unanswered.remove(c.viewerId());
                 ledger.onReacted(c, nowMs);
                 LineWriter.Detected d = LineWriter.detect(c.text(), c.gift());
-                String recall = memory.recall(c.viewerId(), d.keyword(), nowMs);
-                LineWriter.Line line;
+                // 기억·"또 와 줬네요"는 인사·잡담일 때만. 구체적인 말(피곤해, 라면 먹었어)엔 그 말에 답하는 게 먼저다
                 boolean generic = d.topic() == LineWriter.Topic.GREETING || d.topic() == LineWriter.Topic.OTHER;
+                String recall = generic ? memory.recall(c.viewerId(), d.keyword(), nowMs) : null;
+                LineWriter.Line line;
                 if (recall == null && generic && prevChatters.contains(c.viewerId()) && greetedReturning.add(c.viewerId())) {
                     // 지난 라이브에도 왔던 팬 (꺼낼 키워드는 없지만 다시 온 것 자체를 알아본다).
                     // 인사·잡담일 때만 — 구체적인 말을 했으면 그 말에 답하는 게 먼저다
@@ -324,6 +347,59 @@ public class LiveRoom {
     }
 
     /** 규칙을 바꾸면 숫자를 처음부터 다시 센다 (규칙끼리 같은 조건에서 비교하려고). 팬 기억은 남는다 */
+    /** 최근 채팅 복사본 (질문의 답 세기용) */
+    public List<Chat> recentChats() {
+        lock.lock();
+        try {
+            return List.copyOf(recent);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 떡밥 점수: 최근 30초에 주제별로 말한 팬 수 */
+    public Map<String, Integer> hotTopics(long nowMs) {
+        lock.lock();
+        try {
+            Map<String, java.util.Set<String>> fans = new LinkedHashMap<>();
+            for (Chat c : recent) {
+                if (nowMs - c.receivedAtMs() > CARRY_MS) continue;
+                String label = groupLabel(LineWriter.detect(c.text(), c.gift()));
+                if (label != null) fans.computeIfAbsent(label, x -> new java.util.HashSet<>()).add(c.viewerId());
+            }
+            Map<String, Integer> out = new LinkedHashMap<>();
+            fans.forEach((k, v) -> out.put(k, v.size()));
+            return out;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 이번 라이브에서 목소리로 이름이 불린 팬 */
+    public java.util.Set<String> voiceCalled() {
+        lock.lock();
+        try {
+            java.util.Set<String> out = new java.util.HashSet<>();
+            for (FanLedger.Fan f : ledger.all()) if (f.reactedCount > 0) out.add(f.viewerId);
+            return out;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 질문에 답한 팬들을 "답 모아 반응"으로 함께 인정한다 */
+    public void ackAnswers(java.util.Collection<String> viewerIds) {
+        lock.lock();
+        try {
+            for (String id : viewerIds) {
+                ledger.onGroupAck(id);
+                unanswered.remove(id);
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** 키워드 없이 "지난 라이브에도 왔던 팬"을 알아볼 때 recall 칸에 넣는 값 */
     public static final String RETURNING = "지난 라이브";
     private static final List<String> RETURNING_LINES = List.of(
@@ -409,6 +485,7 @@ public class LiveRoom {
         ledger = new FanLedger();
         pending = new ArrayList<>();
         unanswered = new LinkedHashMap<>();
+        recent = new java.util.ArrayDeque<>();
         totalChats = 0;
         blockedChats = 0;
         recalls = 0;

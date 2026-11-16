@@ -36,6 +36,15 @@ public class BotAudience {
 
     private final List<Bot> bots;
     private final Random rnd;
+    /** 캐릭터가 질문 중이면 봇이 이 답들 중에서 고르기도 한다 (null이면 평소 채팅만) */
+    private volatile List<String> answers;
+    /** 질문 중일 때 봇 채팅 중 답의 비율 (가정) */
+    public static final double ANSWER_CHANCE = 0.6;
+
+    /** 캐릭터가 질문을 던지면 봇도 그 질문에 답하게 한다. null이면 그만 */
+    public void answering(List<String> answers) {
+        this.answers = answers;
+    }
 
     public BotAudience(int n, long seed) {
         this.rnd = new Random(seed);
@@ -75,7 +84,10 @@ public class BotAudience {
             if (!present.test(b)) continue;
             if (rnd.nextDouble() < dtMs / b.meanIntervalMs()) {
                 int gift = rnd.nextDouble() < b.giftChance() ? giftAmount(b) : 0;
-                String text = CHATS[rnd.nextInt(CHATS.length)];
+                List<String> a = answers;
+                String text = a != null && rnd.nextDouble() < ANSWER_CHANCE
+                        ? a.get(rnd.nextInt(a.size()))
+                        : CHATS[rnd.nextInt(CHATS.length)];
                 out.add(new Sent(b, text, gift));
             }
         }
