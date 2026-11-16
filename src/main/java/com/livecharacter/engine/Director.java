@@ -22,7 +22,7 @@ import java.util.function.Predicate;
  */
 public class Director {
 
-    public enum Kind { REACT, ASK, ANSWERS, TALK, STORY, GROUP }
+    public enum Kind { REACT, ASK, ANSWERS, TALK, STORY, GROUP, HELLO }
 
     /**
      * 진행자가 던지는 질문. buckets = 답 칸 → 그 칸으로 셀 키워드들.
@@ -127,6 +127,32 @@ public class Director {
     /** 질문할 게 없을 때 이만큼 차례마다 솔라 자기 이야기 한 줄 */
     public static final int STORY_EVERY = 6;
 
+    /**
+     * 방송 시작 구간: 실제 방송처럼 인사 → 인사 채팅에 먼저 답하기 → 오늘 할 이야기 안내 → 본 방송.
+     * 사용자 피드백(2026-11-17): "진짜 방송 흐름처럼, 처음 켜지면 인사부터". startLive를 부르지 않으면(시뮬레이션) 이 구간은 없다
+     */
+    public static final long OPENING_MS = 40_000;
+    static final String HELLO_LINE = "안녕하세요 여러분! 솔라의 별빛 라디오 시작함 해요!";
+    static final String AGENDA_LINE = "오늘은 여러분 하루 얘기 많이 듣고 싶어요. 채팅 많이 해 줘요!";
+    private long liveStartAt = Long.MIN_VALUE;
+    private int helloStep;
+
+    /**
+     * 방송을 시작한다. 시작 구간 동안은 질문을 하지 않고, 끝나면 바로 첫 질문을 할 수 있게 한다.
+     * @param greeted 이미 인사를 했는가 (다음 라이브는 지난 라이브 요약 오프닝으로 인사를 대신한다)
+     */
+    public synchronized void startLive(long nowMs, boolean greeted) {
+        liveStartAt = nowMs;
+        helloStep = greeted ? 1 : 0;
+        lastAskAt = nowMs + OPENING_MS - ASK_GAP_MS;
+        turnsSinceAsk = 0;
+    }
+
+    /** 시작 구간 중인가 (화면 표시용) */
+    public synchronized boolean inOpening(long nowMs) {
+        return liveStartAt != Long.MIN_VALUE && nowMs - liveStartAt < OPENING_MS;
+    }
+
     /** 솔라 자기 이야기 (설정표 바탕, 템플릿). 채팅만 읽지 않고 캐릭터가 먼저 말을 거는 차례 */
     static final List<String> STORIES = List.of(
             "오늘 별똥별 타고 오다가 구름에 살짝 걸렸어요. 꼬리별이 아직 축축함 해요!",
@@ -160,6 +186,19 @@ public class Director {
      * @param groupTurn 이번 차례가 묶음 인정 차례인가 (질문 중이 아닐 때만 쓴다)
      */
     public synchronized Plan next(long nowMs, Map<String, Integer> hot, boolean groupTurn) {
+        if (liveStartAt != Long.MIN_VALUE && nowMs - liveStartAt < OPENING_MS) {
+            if (helloStep == 0) {
+                helloStep = 1;
+                return new Plan(Kind.HELLO, null, null, HELLO_LINE);
+            }
+            if (helloStep == 1 && nowMs - liveStartAt >= OPENING_MS / 2) {
+                helloStep = 2;
+                return new Plan(Kind.HELLO, null, null, AGENDA_LINE);
+            }
+            // 시작 구간엔 인사 채팅에 먼저 답한다
+            return new Plan(Kind.REACT, null,
+                    c -> LineWriter.detect(c.text(), c.gift()).topic() == LineWriter.Topic.GREETING, null);
+        }
         if (active != null) {
             if (nowMs - askedAt >= ANSWER_MS) return new Plan(Kind.ANSWERS, active, null, null);
             Question q = active;
@@ -323,6 +362,7 @@ public class Director {
     }
 
     public synchronized Status status(long nowMs) {
+        if (inOpening(nowMs)) return new Status("방송 시작 인사", false, OPENING_MS - (nowMs - liveStartAt), null);
         if (active != null) return new Status(active.label(), true, Math.max(0, ANSWER_MS - (nowMs - askedAt)), active.ask());
         if (topic != null && nowMs < topicUntil) return new Status(topic.label(), false, topicUntil - nowMs, null);
         return new Status(null, false, 0, null);

@@ -19,7 +19,10 @@ public class DonationQueue {
                            long receivedAtMs) {
     }
 
-    public enum Kind { NONE, READ, BATCH }
+    /**
+     * READ = 하나씩 읽기, BATCH = 쌓여서 묶어 감사, QUICK = 떡밥 진행 중에 큰 후원만 이름·금액으로 빠르게 감사
+     */
+    public enum Kind { NONE, READ, BATCH, QUICK }
 
     /**
      * @param readText 시스템 목소리로 읽을 후원 알림 (묶음이면 null)
@@ -29,10 +32,15 @@ public class DonationQueue {
     }
 
     public record Stats(int queued, long offered, long read, long batchedTurns, long batchedDonations,
-                        long waitP50Ms, long waitMaxMs) {
+                        long waitP50Ms, long waitMaxMs, long quickTurns, long quickDonations) {
     }
 
     public static final int BATCH_AT = 6;
+    /**
+     * 이 금액 이상은 "읽어 달라"는 뜻이 담긴 큰 후원으로 보고, 어떤 경우에도 이름·금액을 부른다
+     * (묶음 감사에서도 "외 N분"으로 뭉개지 않는다). 사용자 의견(2026-11-17) — 기준 금액·규칙은 기획이 정할 값
+     */
+    public static final int BIG_AT = 10_000;
     public static final long MAX_WAIT_MS = 60_000;
     public static final int MESSAGE_MAX = 40;
 
@@ -44,7 +52,7 @@ public class DonationQueue {
 
     private final ArrayDeque<Donation> queue = new ArrayDeque<>();
     private final List<Long> waits = new ArrayList<>();
-    private long offered, read, batchedTurns, batchedDonations;
+    private long offered, read, batchedTurns, batchedDonations, quickTurns, quickDonations;
     private int thanksTurn;
 
     /** 후원을 받는다. 메시지는 개인정보를 가리고, 금칙어가 있으면 메시지는 읽지 않는다(감사 인사만) */
@@ -76,6 +84,17 @@ public class DonationQueue {
     public synchronized Plan next(long nowMs, boolean busy, boolean readAllowed) {
         if (queue.isEmpty()) return new Plan(Kind.NONE, List.of(), null, null);
         boolean overflow = queue.size() >= BATCH_AT || nowMs - queue.peekFirst().receivedAtMs() > MAX_WAIT_MS;
+        if (busy && !overflow && readAllowed) {
+            // 떡밥 진행 중: 작은 후원은 기다리게 하고, 큰 후원은 메시지 없이 이름·금액만 빠르게 감사하고 진행을 이어 간다
+            List<Donation> big = queue.stream().filter(x -> x.amount() >= BIG_AT).toList();
+            if (!big.isEmpty()) {
+                queue.removeAll(big);
+                big.forEach(x -> waits.add(nowMs - x.receivedAtMs()));
+                quickTurns++;
+                quickDonations += big.size();
+                return new Plan(Kind.QUICK, big, null, quickLine(big));
+            }
+        }
         if ((busy || !readAllowed) && !overflow) return new Plan(Kind.NONE, List.of(), null, null);
         if (overflow) {
             List<Donation> all = new ArrayList<>(queue);
@@ -132,7 +151,33 @@ public class DonationQueue {
         };
     }
 
+    /** 큰 후원 이름 부르기: 금액이 같으면 "A님, B님 10,000원 후원 감사합니다~", 다르면 사람마다 금액 */
+    static String bigNames(List<Donation> big) {
+        boolean same = big.stream().map(Donation::amount).distinct().count() == 1;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < big.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(big.get(i).nickname()).append("님");
+            if (!same) sb.append(' ').append(amount(big.get(i).amount()));
+        }
+        if (same) sb.append(' ').append(amount(big.get(0).amount()));
+        return sb.toString();
+    }
+
+    static String quickLine(List<Donation> big) {
+        // 메시지는 읽지 않는다 ("이따 볼게요"라고 약속하지 않는다 — 실제로 다시 읽는 기능은 없으니까)
+        return bigNames(big) + " 후원 감사합니다~ 하던 이야기 이어 갈게요!";
+    }
+
     static String batchLine(List<Donation> all) {
+        List<Donation> big = all.stream().filter(x -> x.amount() >= BIG_AT).toList();
+        List<Donation> small = all.stream().filter(x -> x.amount() < BIG_AT).toList();
+        if (!big.isEmpty()) {
+            // 큰 후원은 묶음 안에서도 한 명씩 이름·금액을 부르고, 작은 후원만 "외 N분"으로
+            String head = bigNames(big) + " 후원 감사합니다!";
+            if (small.isEmpty()) return head;
+            return head + " 그리고 " + small.get(0).nickname() + "님" + (small.size() > 1 ? " 외 " + (small.size() - 1) + "분" : "") + "도 고마워요!";
+        }
         if (all.size() == 1) return all.get(0).nickname() + "님 후원 감사합니다!";
         String names = all.get(0).nickname() + "님, " + all.get(1).nickname() + "님";
         int rest = all.size() - 2;
@@ -147,6 +192,6 @@ public class DonationQueue {
         List<Long> s = new ArrayList<>(waits);
         Collections.sort(s);
         return new Stats(queue.size(), offered, read, batchedTurns, batchedDonations,
-                s.isEmpty() ? 0 : s.get(s.size() / 2), s.isEmpty() ? 0 : s.get(s.size() - 1));
+                s.isEmpty() ? 0 : s.get(s.size() / 2), s.isEmpty() ? 0 : s.get(s.size() - 1), quickTurns, quickDonations);
     }
 }

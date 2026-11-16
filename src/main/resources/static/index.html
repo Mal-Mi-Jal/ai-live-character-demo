@@ -183,7 +183,7 @@
         <div class="stat"><div class="v" id="dBatch">0</div><div class="l">묶어서 감사한 후원 (메시지 건너뜀)</div></div>
         <div class="stat"><div class="v" id="dWait">-</div><div class="l">후원 → 읽기까지 p50 / 최대</div></div>
       </div>
-      <p class="muted">후원은 들어온 순서대로 하나씩 읽어요 (메시지는 시스템 목소리, 감사는 솔라). 질문하고 답을 모으는 중이면 진행을 끊지 않게 보류했다가 끝나면 읽고, 6개 이상 쌓이거나 60초 넘게 기다리면 메시지는 건너뛰고 한 줄로 묶어서 감사해요. 일반 채팅 차례와 번갈아 읽어요.</p>
+      <p class="muted">후원은 들어온 순서대로 하나씩 읽어요 (메시지는 시스템 목소리, 감사는 솔라). 질문하고 답을 모으는 중이면 진행을 끊지 않게 보류했다가 끝나면 읽어요. 단, 10,000원 이상은 진행 중에도 이름·금액으로 바로 감사해요. 6개 이상 쌓이거나 60초 넘게 기다리면 메시지는 건너뛰고 묶어서 감사하는데, 10,000원 이상은 묶음 안에서도 한 명씩 이름·금액을 불러요. 일반 채팅 차례와 번갈아 읽어요.</p>
     </section>
     <section class="tabpane" id="paneLlm"><div class="llmbox" id="llm">-</div></section>
     <section class="tabpane" id="paneHist"><div id="history"></div></section>
@@ -402,8 +402,8 @@ function renderSpeak(t) {
     addHistory([el("b", null, r.nickname + " "), document.createTextNode(r.line)]);
   } else {
     const g = t.group;
-    const label = { ask: "솔라 · 질문", answers: `솔라 · 답 ${g.count}명 정리`, talk: "솔라 · 이어 말하기", group: `솔라 · 묶음 인정 ${g.count}명`, opening: "솔라 · 오프닝", story: "솔라 · 혼잣말" }[kind] || "솔라";
-    const face = { ask: "🤔", answers: "🤩", talk: "😊", group: "🤩", opening: "🥹", story: "😌" }[kind];
+    const label = { ask: "솔라 · 질문", answers: `솔라 · 답 ${g.count}명 정리`, talk: "솔라 · 이어 말하기", group: `솔라 · 묶음 인정 ${g.count}명`, opening: "솔라 · 오프닝", story: "솔라 · 혼잣말", hello: "솔라 · 방송 시작", closing: "솔라 · 마무리" }[kind] || "솔라";
+    const face = { ask: "🤔", answers: "🤩", talk: "😊", group: "🤩", opening: "🥹", story: "😌", hello: "😊", closing: "🥹" }[kind];
     showLine(label, g.line, face, t.speakMs);
     speak([{ text: g.line, role: "solar" }]);
     addHistory([el("b", null, `[${label.replace("솔라 · ", "")}] `), document.createTextNode(g.line)]);
@@ -427,10 +427,11 @@ function renderDonationSpeak(t) {
     const total = t.items.reduce((s, d) => s + d.amount, 0);
     $("alertNick").textContent = t.items.length > 1 ? `${first.nickname} 외 ${t.items.length - 1}` : first.nickname;
     $("alertAmt").textContent = `합계 ${won(total)}`;
-    $("alertMsg").textContent = "후원이 몰려서 메시지는 건너뛰고 한 번에 감사해요";
-    showLine(`솔라 · 후원 ${t.items.length}건 묶어서 감사`, t.thanks, "🥹", t.speakMs, true);
+    const quick = t.kind === "QUICK";
+    $("alertMsg").textContent = quick ? "이야기 진행 중이라 이름·금액만 먼저 감사해요" : "후원이 몰려서 만 원 미만 메시지는 건너뛰고 한 번에 감사해요";
+    showLine(quick ? `솔라 · 큰 후원 ${t.items.length}건 바로 감사` : `솔라 · 후원 ${t.items.length}건 묶어서 감사`, t.thanks, "🥹", t.speakMs, true);
     speak([{ text: t.thanks, role: "solar" }]);
-    addHistory([el("b", null, `[후원 ${t.items.length}건 묶음] `), document.createTextNode(t.thanks)]);
+    addHistory([el("b", null, quick ? `[큰 후원 ${t.items.length}건 바로 감사] ` : `[후원 ${t.items.length}건 묶음] `), document.createTextNode(t.thanks)]);
   }
   alert.classList.add("show");
   clearTimeout(renderDonationSpeak.t); renderDonationSpeak.t = setTimeout(() => alert.classList.remove("show"), Math.max(3000, t.speakMs));
@@ -443,7 +444,7 @@ function renderDonationBoard(b) {
   if (b.queue.length > 4) box.append(el("span", null, `외 ${b.queue.length - 4}`));
   const s = b.stats;
   $("dQueued").textContent = s.queued; $("dRead").textContent = s.read;
-  $("dBatch").textContent = `${s.batchedDonations}건 (${s.batchedTurns}번)`;
+  $("dBatch").textContent = `${s.batchedDonations}건 (${s.batchedTurns}번)` + (s.quickDonations ? ` · 큰 후원 바로 감사 ${s.quickDonations}건` : "");
   $("dWait").textContent = s.read + s.batchedDonations ? `${(s.waitP50Ms / 1000).toFixed(0)}초 / ${(s.waitMaxMs / 1000).toFixed(0)}초` : "-";
 }
 

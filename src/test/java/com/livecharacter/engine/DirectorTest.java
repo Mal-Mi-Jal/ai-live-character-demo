@@ -64,6 +64,21 @@ class DirectorTest {
     }
 
     @Test
+    void 방송_시작은_인사부터_인사_채팅에_먼저_답하고_오늘_계획_안내_뒤_본_방송() {
+        Director d = new Director();
+        d.startLive(0, false);
+        Director.Plan hello = d.next(1_000, Map.of("라면", 9), false);
+        assertThat(hello.kind()).isEqualTo(Director.Kind.HELLO);
+        assertThat(hello.preface()).startsWith("안녕하세요");
+        Director.Plan greet = d.next(5_000, Map.of("라면", 9), false); // 떡밥이 있어도 시작 구간엔 질문 안 함
+        assertThat(greet.kind()).isEqualTo(Director.Kind.REACT);
+        assertThat(greet.prefer().test(chat(1, "a", "안녕 솔라!", 4_000))).isTrue();
+        assertThat(d.next(21_000, Map.of(), false).preface()).startsWith("오늘은");
+        Director.Plan main = d.next(41_000, Map.of("라면", 9), false);
+        assertThat(main.kind()).isEqualTo(Director.Kind.ASK); // 시작 구간이 끝나면 바로 첫 질문
+    }
+
+    @Test
     void 떡밥이_없어도_8차례가_지나면_돌아가며_질문한다() {
         Director d = new Director();
         Director.Kind last = null;

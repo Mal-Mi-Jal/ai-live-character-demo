@@ -41,6 +41,20 @@ public class BotAudience {
     /** 질문 중일 때 봇 채팅 중 답의 비율 (가정) */
     public static final double ANSWER_CHANCE = 0.6;
 
+    /** 잠깐 동안의 반응 (인사·웃음·배웅). 질문 답보다 우선순위가 낮다 */
+    private record Cheer(List<String> lines, double chance, long untilMs) {
+    }
+
+    private volatile Cheer cheer;
+
+    /**
+     * 캐릭터의 말에 봇이 잠깐 따라 반응한다 (방송 시작이면 인사, 이야기 뒤엔 "ㅋㅋㅋ", 큰 후원엔 "오 만원!").
+     * 화면 데모용. 처음엔 봇이 정해진 문장만 무작위로 쳐서, 캐릭터가 무슨 말을 해도 채팅이 따라오지 않았다
+     */
+    public void cheer(List<String> lines, double chance, long durationMs) {
+        this.cheer = new Cheer(lines, chance, System.currentTimeMillis() + durationMs);
+    }
+
     /** 캐릭터가 질문을 던지면 봇도 그 질문에 답하게 한다. null이면 그만 */
     public void answering(List<String> answers) {
         this.answers = answers;
@@ -93,9 +107,12 @@ public class BotAudience {
             if (rnd.nextDouble() < dtMs / b.meanIntervalMs()) {
                 int gift = rnd.nextDouble() < b.giftChance() ? giftAmount(b) : 0;
                 List<String> a = answers;
-                String text = a != null && rnd.nextDouble() < ANSWER_CHANCE
-                        ? a.get(rnd.nextInt(a.size()))
-                        : CHATS[rnd.nextInt(CHATS.length)];
+                Cheer ch = cheer;
+                String text;
+                if (a != null && rnd.nextDouble() < ANSWER_CHANCE) text = a.get(rnd.nextInt(a.size()));
+                else if (ch != null && System.currentTimeMillis() < ch.untilMs() && rnd.nextDouble() < ch.chance())
+                    text = ch.lines().get(rnd.nextInt(ch.lines().size()));
+                else text = CHATS[rnd.nextInt(CHATS.length)];
                 out.add(new Sent(b, text, gift));
             }
         }

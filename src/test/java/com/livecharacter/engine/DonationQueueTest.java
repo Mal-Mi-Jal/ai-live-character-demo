@@ -44,6 +44,29 @@ class DonationQueueTest {
     }
 
     @Test
+    void 떡밥_진행_중이면_만원_이상만_이름과_금액으로_바로_감사하고_작은_후원은_기다린다() {
+        DonationQueue q = new DonationQueue();
+        q.offer("a", "작은팬", 1000, "안녕", false, 0);
+        q.offer("b", "큰손1", 10000, "솔라 최고", false, 0);
+        q.offer("c", "큰손2", 10000, "", false, 0);
+        DonationQueue.Plan p = q.next(5_000, true, true);
+        assertThat(p.kind()).isEqualTo(DonationQueue.Kind.QUICK);
+        assertThat(p.thanks()).startsWith("큰손1님, 큰손2님 10,000원 후원 감사합니다~");
+        assertThat(q.snapshot()).extracting(DonationQueue.Donation::nickname).containsExactly("작은팬");
+        assertThat(q.next(6_000, true, true).kind()).isEqualTo(DonationQueue.Kind.NONE); // 작은 후원은 진행 끝날 때까지
+    }
+
+    @Test
+    void 몰려서_묶어도_만원_이상은_한_명씩_이름과_금액을_부른다() {
+        DonationQueue q = new DonationQueue();
+        q.offer("b", "큰손", 50000, "와", false, 0);
+        for (int i = 0; i < 5; i++) q.offer("s" + i, "팬" + i, 1000, "", false, i);
+        DonationQueue.Plan p = q.next(1_000, false, true);
+        assertThat(p.kind()).isEqualTo(DonationQueue.Kind.BATCH);
+        assertThat(p.thanks()).isEqualTo("큰손님 50,000원 후원 감사합니다! 그리고 팬0님 외 4분도 고마워요!");
+    }
+
+    @Test
     void 떡밥_진행_중이면_보류하고_끝나면_읽는다() {
         DonationQueue q = new DonationQueue();
         q.offer("a", "에이", 1000, "질문 중에 후원", false, 0);

@@ -169,6 +169,7 @@ public class LiveService {
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "live-loop"));
         scheduler.scheduleAtFixedRate(guard(this::botStep), botStepMs, botStepMs, TimeUnit.MILLISECONDS);
         scheduler.scheduleAtFixedRate(guard(this::flushChat), chatFlushMs, chatFlushMs, TimeUnit.MILLISECONDS);
+        director.startLive(System.currentTimeMillis() + 3000, false);
         scheduleTurn(3000);
     }
 
@@ -255,14 +256,28 @@ public class LiveService {
         long now = System.currentTimeMillis();
         String ruleLabel = rule.label();
         int bots = audience.bots().size();
+        if (switchPending) {
+            // 마무리 인사를 마쳤으면 여기서 다음 라이브로 바꾼다 (차례 번호도 새로 센다)
+            switchPending = false;
+            switchLive();
+        }
         int turnNo;
         synchronized (statsLock) {
             turnNo = turns + 1;
+        }
+        if (endRequested) {
+            endRequested = false;
+            switchPending = true;
+            int fans = room.stats().chatters();
+            String closing = "오늘 방송은 여기까지! 와 준 " + fans + "명 다 고마워요. 다음 라이브에서 또 만나요!";
+            speakSpecial(turnNo, "closing", new LiveRoom.GroupMoment("마무리", fans, List.of(), closing), ruleLabel, bots);
+            return;
         }
         String opening = pendingOpening;
         if (opening != null) {
             pendingOpening = null;
             long ms = speakMs(opening);
+            cheerFor("opening");
             synchronized (statsLock) {
                 turns++;
             }
@@ -327,6 +342,10 @@ public class LiveService {
                     });
             return;
         }
+        if (plan.kind() == Director.Kind.HELLO) {
+            speakSpecial(turnNo, "hello", new LiveRoom.GroupMoment("인사", 0, List.of(), plan.preface()), ruleLabel, bots);
+            return;
+        }
         if (plan.kind() == Director.Kind.STORY) {
             // 솔라가 먼저 자기 이야기 한 줄 (템플릿, 설정표 바탕)
             String line = d.storyLine();
@@ -371,7 +390,24 @@ public class LiveService {
                 });
     }
 
+    private static final List<String> CHEER_HELLO = List.of("안녕 솔라!", "하이하이", "솔라 왔다!", "오늘도 반가워요", "ㅎㅇㅎㅇ", "처음 왔어요!");
+    private static final List<String> CHEER_REACT = List.of("ㅋㅋㅋㅋ", "귀여워", "솔라 최고", "ㅠㅠ 공감", "와 진짜?", "ㅋㅋㅋ 솔라답다");
+    private static final List<String> CHEER_BIG = List.of("오 만원!", "큰손 등장", "ㄷㄷ 만원", "멋지다");
+    private static final List<String> CHEER_BYE = List.of("수고했어요!", "잘 자 솔라", "다음에 또 올게요", "오늘 재밌었어요", "빠이빠이");
+
+    /** 방송 흐름에 맞춰 봇 채팅이 잠깐 따라오게 한다 (화면 데모용) */
+    private void cheerFor(String kind) {
+        switch (kind) {
+            case "hello", "opening" -> audience.cheer(CHEER_HELLO, 0.5, 25_000);
+            case "story", "talk", "answers" -> audience.cheer(CHEER_REACT, 0.35, 8_000);
+            case "closing" -> audience.cheer(CHEER_BYE, 0.6, 15_000);
+            default -> {
+            }
+        }
+    }
+
     private void speakDonation(int turnNo, DonationQueue.Plan dp) {
+        if (dp.items().stream().anyMatch(x -> x.amount() >= DonationQueue.BIG_AT)) audience.cheer(CHEER_BIG, 0.3, 6_000);
         long ms = (dp.readText() == null ? 0 : speakMs(dp.readText())) + speakMs(dp.thanks());
         synchronized (statsLock) {
             turns++;
@@ -386,6 +422,7 @@ public class LiveService {
     /** 질문·답 정리·묶음 인정처럼 한 사람에게 하는 말이 아닌 차례 (템플릿, LLM 안 씀) */
     private void speakSpecial(int turnNo, String kind, LiveRoom.GroupMoment g, String ruleLabel, int bots) {
         long ms = speakMs(g.line());
+        cheerFor(kind);
         synchronized (statsLock) {
             turns++;
             remember(g.line());
@@ -464,10 +501,22 @@ public class LiveService {
      * 지금 라이브를 끝내고 다음 라이브를 시작한다. 숫자는 새로 세고 팬 기억은 남는다.
      * 봇은 같은 봇들이 다시 온다 (데모라서 복귀 여부는 시뮬레이션 테스트 ReturnRateTest에서 따로 본다)
      */
+    /**
+     * "라이브 끝내고 다음 라이브": 바로 바꾸지 않고, 다음 차례에 마무리 인사를 한 뒤 바꾼다 (실제 방송처럼).
+     */
     public synchronized void nextLive() {
+        endRequested = true;
+    }
+
+    private volatile boolean endRequested;
+    private volatile boolean switchPending;
+
+    /** 마무리 인사를 마친 뒤 실제로 다음 라이브로 바꾼다 */
+    private synchronized void switchLive() {
         lastLive = room.startNextLive();
         donations = new DonationQueue();
         director = new Director();
+        director.startLive(System.currentTimeMillis(), true); // 지난 라이브 요약 오프닝이 인사를 대신한다
         audience.answering(null);
         pendingOpening = lastLive.openingLine();
         synchronized (statsLock) {
@@ -486,6 +535,7 @@ public class LiveService {
         donations = new DonationQueue();
         room.reset(rule);
         director = new Director();
+        director.startLive(System.currentTimeMillis(), false);
         synchronized (statsLock) {
             voiceStarts.clear();
             turns = 0;
