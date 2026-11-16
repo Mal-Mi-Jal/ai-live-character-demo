@@ -53,6 +53,84 @@ class VoiceModeTest {
                 s.waitP50Ms() + slotMs, s.waitP95Ms() + slotMs, spoken);
     }
 
+    record Full(String label, double voice, double any, double quiet, double quietAny, long p50, long p95, int turns, int groups) {
+    }
+
+    /**
+     * 지금 데모 설정: 한 차례에 목소리 1명(35자 안팎 템플릿 대사) + 화면 ❤ 3명, 4차례마다 묶음 인정(3명 이상일 때).
+     * 대사 길이는 실제 템플릿 대사 길이로 계산한다.
+     */
+    static Full voiceDemo(PickRule rule, int bots, long seed) {
+        BotAudience audience = new BotAudience(bots, seed);
+        java.util.Map<String, BotAudience.Kind> kind = new java.util.HashMap<>();
+        audience.bots().forEach(b -> kind.put(b.id(), b.kind()));
+        LiveRoom room = new LiveRoom(rule, 1, 3, seed);
+        long next = 3000;
+        int turns = 0, groups = 0;
+        java.util.List<Long> starts = new java.util.ArrayList<>();
+        for (long now = 0; now < 600_000; now += 100) {
+            for (BotAudience.Sent s : audience.step(100)) {
+                room.receive(s.bot().id(), s.bot().nickname(), s.text(), s.gift(), now, false);
+            }
+            if (now < next) continue;
+            String line = null;
+            if ((turns + 1) % 4 == 0) {
+                LiveRoom.GroupMoment g = room.groupMoment(now);
+                if (g != null) {
+                    line = g.line();
+                    groups++;
+                }
+            }
+            if (line == null) {
+                LiveRoom.TickResult r = room.tick(now);
+                if (r.reactions().isEmpty()) {
+                    next = now + 1000;
+                    continue;
+                }
+                line = r.reactions().get(0).line();
+                starts.add(r.reactions().get(0).waitMs());
+            }
+            turns++;
+            next = now + Math.round(line.length() / CHARS_PER_SEC * 1000) + 400;
+        }
+        int chat = 0, voice = 0, any = 0, qChat = 0, qVoice = 0, qAny = 0;
+        for (FanLedger.Fan f : room.fansSnapshot()) {
+            boolean v = f.reactedCount > 0, a = v || f.screenAcked > 0 || f.groupAcked > 0;
+            chat++;
+            if (v) voice++;
+            if (a) any++;
+            if (kind.get(f.viewerId) == BotAudience.Kind.QUIET) {
+                qChat++;
+                if (v) qVoice++;
+                if (a) qAny++;
+            }
+        }
+        java.util.Collections.sort(starts);
+        long p50 = starts.isEmpty() ? 0 : starts.get(starts.size() / 2);
+        long p95 = starts.isEmpty() ? 0 : starts.get((int) Math.ceil(0.95 * starts.size()) - 1);
+        return new Full(rule.label(), (double) voice / chat, (double) any / chat,
+                qChat == 0 ? 0 : (double) qVoice / qChat, qChat == 0 ? 0 : (double) qAny / qChat, p50, p95, turns, groups);
+    }
+
+    @Test
+    void 지금_데모_설정_목소리_1명_화면_3명_묶음_인정() {
+        System.out.println("음성 데모 설정 10분 (목소리 1명 + 화면 ❤ 3명, 4차례마다 묶음, 템플릿 대사 길이, 시드 42)");
+        System.out.println("봇   | 규칙        | 차례(묶음) | 목소리로 불린 팬 | 하나라도 인정 | 조용한 팬 목소리/인정 | 고르기까지 대기 p50 | p95 (+대사 생성 시간)");
+        Full c300 = null, a300 = null;
+        for (int bots : new int[]{300, 1000}) {
+            for (PickRule rule : PickRule.all()) {
+                Full f = voiceDemo(rule, bots, 42);
+                if (bots == 300 && rule == PickRule.FAIR) c300 = f;
+                if (bots == 300 && rule == PickRule.RANDOM) a300 = f;
+                System.out.printf("%4d | %-10s | %3d(%2d) | %5.1f%% | %5.1f%% | %5.1f%% / %5.1f%% | %5.1f초 | %5.1f초%n",
+                        bots, f.label(), f.turns(), f.groups(), f.voice() * 100, f.any() * 100,
+                        f.quiet() * 100, f.quietAny() * 100, f.p50() / 1000.0, f.p95() / 1000.0);
+            }
+        }
+        assertThat(c300.any()).isGreaterThan(c300.voice()); // 화면·묶음 인정이 목소리보다 넓게 닿는다
+        assertThat(c300.quietAny()).isGreaterThan(a300.quietAny());
+    }
+
     @Test
     void 음성이면_한_사람씩이라_닿는_팬이_크게_줄고_공정_규칙이_더_중요해진다() {
         System.out.println("음성 모드 10분 라이브 (한 번에 한 명, 초당 5.7자로 읽음, 시드 42)");

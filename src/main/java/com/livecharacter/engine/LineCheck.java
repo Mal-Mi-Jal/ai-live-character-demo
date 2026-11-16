@@ -11,10 +11,13 @@ import java.util.regex.Pattern;
 public final class LineCheck {
 
     /**
-     * 음성으로 읽힐 대사라 짧게. 실측(2026-11-16): Haiku 대사 평균 약 50자, 길면 80자 넘음.
+     * 음성으로 읽힐 대사라 짧게. 초당 5.7자(Windows 한국어 음성 실측) → 30자 약 5초, 45자 약 8초.
+     * 실측(2026-11-16): 90자 제한 → Haiku 평균 65자(11.4초). 35자 제한 → 20줄 중 18줄이 넘어서 버려짐
+     * → 프롬프트 목표는 30자, 버리는 선은 45자로 벌려 둠 (다음 측정에서 실제 길이를 보고 다시 정한다).
      * (예전 90자 제한에서는 81~90자 대사가 SafetyFilter의 80자 자르기에 걸려 "금칙어·개인정보"로 잘못 셌다)
      */
-    public static final int MAX_LEN = 60;
+    public static final int TARGET_LEN = 30;
+    public static final int MAX_LEN = 45;
 
     /** 기억을 지어낼 때 쓰는 말 — 코드가 기억을 넘기지 않았는데 이런 말이 나오면 지어낸 것 */
     private static final List<String> MEMORY_WORDS = List.of("지난번", "저번", "기억");

@@ -96,6 +96,7 @@ public interface PickRule {
         static final double FIRST_TIME = 60;
         static final double MAX_WAIT_SEC = 60;
         static final double PER_REACTION = 40;
+        static final double PER_LIGHT_ACK = 10;
         static final double GIFT_PER_1000 = 5;
         static final double MAX_GIFT = 30;
 
@@ -109,7 +110,9 @@ public interface PickRule {
             // 채팅 기준이면 많이 말해도 점수가 오르지 않고, 조용한 팬의 한 마디가 시간이 지나며 앞으로 온다
             double waitSec = Math.min(MAX_WAIT_SEC, Math.max(0, (nowMs - c.receivedAtMs()) / 1000.0));
             double gift = Math.min(MAX_GIFT, c.gift() / 1000.0 * GIFT_PER_1000);
-            return (reacted == 0 ? FIRST_TIME : 0) + waitSec - PER_REACTION * reacted + gift;
+            // 화면·묶음으로 이미 인정받은 팬은 조금 뒤로 (목소리 기회는 남겨 둔다)
+            int lighter = fan == null ? 0 : fan.screenAcked + fan.groupAcked;
+            return (reacted == 0 ? FIRST_TIME : 0) + waitSec - PER_REACTION * reacted - PER_LIGHT_ACK * lighter + gift;
         }
     }
 }

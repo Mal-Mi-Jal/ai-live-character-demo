@@ -39,20 +39,35 @@ public class LiveRoom {
         }
     }
 
-    /** 지금까지의 숫자 */
+    /** 화면 인정: 목소리 대신 화면에 "솔라가 봤어요 ❤"로 이름을 띄운다 */
+    public record Ack(String viewerId, String nickname, String chatText) {
+    }
+
+    /** 묶음 인정: 같은 이야기를 한 팬 여럿을 한 줄로 알아본다. 몇 명인지는 코드가 센다 */
+    public record GroupMoment(String label, int count, List<String> nicknames, String line) {
+    }
+
+    /**
+     * 지금까지의 숫자. reactedFans = 목소리로 이름이 불린 팬, anyAckFans = 목소리·화면·묶음 중 하나라도 받은 팬
+     */
     public record Stats(String rule, int tickNo, long totalChats, int chatters, int reactedFans,
-                        double reactedRatio, long waitP50Ms, long waitP95Ms, int lastBatchSize,
+                        double reactedRatio, int anyAckFans, double anyAckRatio,
+                        long waitP50Ms, long waitP95Ms, int lastBatchSize,
                         int lastCandidates, int lastPool, long blockedChats, int rememberedFans,
                         long recalls) {
     }
 
-    public record TickResult(int tickNo, List<Reaction> reactions, Stats stats) {
+    public record TickResult(int tickNo, List<Reaction> reactions, List<Ack> screenAcks, Stats stats) {
     }
+
+    /** 묶음 인정은 이 인원 이상일 때만 (2명이면 "분들"이 어색하고, 그냥 이름을 부르는 게 낫다) */
+    public static final int GROUP_MIN = 3;
 
     private final ReentrantLock lock = new ReentrantLock();
     private final LineWriter writer = new LineWriter();
     private final FanMemory memory = new FanMemory();
     private final int k;
+    private final int screenK;
     private final Random rnd;
 
     private PickRule rule;
@@ -67,14 +82,21 @@ public class LiveRoom {
     private long totalChats;
     private long blockedChats;
     private long recalls;
+    private long groupMoments;
     private int tickNo;
     private int lastBatchSize;
     private int lastCandidates;
     private int lastPool;
 
     public LiveRoom(PickRule rule, int k, long seed) {
+        this(rule, k, 0, seed);
+    }
+
+    /** @param screenK 목소리 k명 말고, 같은 규칙 순서로 화면에 이름만 띄울 인원 */
+    public LiveRoom(PickRule rule, int k, int screenK, long seed) {
         this.rule = rule;
         this.k = k;
+        this.screenK = screenK;
         this.rnd = new Random(seed);
     }
 
@@ -135,7 +157,14 @@ public class LiveRoom {
             List<Chat> pool = List.copyOf(unanswered.values());
             lastPool = pool.size();
 
-            List<Chat> picked = rule.pick(new PickRule.Context(fresh, pool, ledger, k, rnd, nowMs));
+            List<Chat> ranked = rule.pick(new PickRule.Context(fresh, pool, ledger, k + screenK, rnd, nowMs));
+            List<Chat> picked = ranked.subList(0, Math.min(k, ranked.size()));
+            List<Ack> acks = new ArrayList<>();
+            for (Chat c : ranked.subList(picked.size(), ranked.size())) {
+                unanswered.remove(c.viewerId());
+                ledger.onScreenAck(c.viewerId());
+                acks.add(new Ack(c.viewerId(), c.nickname(), c.text()));
+            }
             List<Reaction> reactions = new ArrayList<>();
             for (Chat c : picked) {
                 unanswered.remove(c.viewerId());
@@ -148,10 +177,66 @@ public class LiveRoom {
                         d.topic(), d.keyword(), recall, line.text(), line.emotion(), "template",
                         nowMs - c.receivedAtMs(), c.human()));
             }
-            return new TickResult(tickNo, List.copyOf(reactions), statsLocked());
+            return new TickResult(tickNo, List.copyOf(reactions), List.copyOf(acks), statsLocked());
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * 묶음 인정 하나. 쌓인 채팅(답 못 받은 최근 30초)을 주제별로 모아, 가장 많은 주제가 GROUP_MIN명 이상이면
+     * "라면 얘기한 5명, 다 봤어요!" 한 줄로 그 팬들을 함께 알아본다. 없으면 null (그 차례는 평소처럼 한 명).
+     * 문장은 템플릿만 쓴다 — 인원 숫자가 들어가서, LLM에게 맡기면 숫자 검사가 더 필요하다.
+     */
+    public GroupMoment groupMoment(long nowMs) {
+        lock.lock();
+        try {
+            // 이번 차례 전까지 쌓인 채팅도 함께 본다
+            for (Chat c : onePerViewer(pending)) {
+                Chat old = unanswered.remove(c.viewerId());
+                unanswered.put(c.viewerId(), old == null ? c : withGift(c, c.gift() + old.gift()));
+            }
+            pending = new ArrayList<>();
+            Map<String, List<Chat>> byLabel = new LinkedHashMap<>();
+            for (Chat c : unanswered.values()) {
+                if (nowMs - c.receivedAtMs() > CARRY_MS) continue;
+                String label = groupLabel(LineWriter.detect(c.text(), c.gift()));
+                if (label != null) byLabel.computeIfAbsent(label, x -> new ArrayList<>()).add(c);
+            }
+            String best = null;
+            for (Map.Entry<String, List<Chat>> e : byLabel.entrySet()) {
+                if (best == null || e.getValue().size() > byLabel.get(best).size()) best = e.getKey();
+            }
+            if (best == null || byLabel.get(best).size() < GROUP_MIN) return null;
+            List<Chat> members = byLabel.get(best);
+            List<String> names = new ArrayList<>();
+            for (Chat c : members) {
+                unanswered.remove(c.viewerId());
+                ledger.onGroupAck(c.viewerId());
+                names.add(c.nickname());
+            }
+            groupMoments++;
+            return new GroupMoment(best, members.size(), List.copyOf(names), groupLine(best, members.size()));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private static String groupLabel(LineWriter.Detected d) {
+        return switch (d.topic()) {
+            case FOOD, GAME -> d.keyword();
+            case TIRED -> "피곤";
+            case GREETING -> "인사";
+            default -> null;
+        };
+    }
+
+    static String groupLine(String label, int n) {
+        return switch (label) {
+            case "피곤" -> "오늘 지친 " + n + "명, 다 같이 쉬어 가요!";
+            case "인사" -> "인사해 준 " + n + "명, 다들 반가워요!";
+            default -> label + " 얘기한 " + n + "명, 솔라 다 봤어요!";
+        };
     }
 
     /**
@@ -189,6 +274,7 @@ public class LiveRoom {
             totalChats = 0;
             blockedChats = 0;
             recalls = 0;
+            groupMoments = 0;
             tickNo = 0;
             lastBatchSize = 0;
             lastCandidates = 0;
@@ -220,8 +306,10 @@ public class LiveRoom {
     private Stats statsLocked() {
         int chatters = ledger.chatters();
         int reacted = ledger.reactedFans();
+        int any = ledger.anyAckFans();
         return new Stats(rule.id(), tickNo, totalChats, chatters, reacted,
                 chatters == 0 ? 0 : (double) reacted / chatters,
+                any, chatters == 0 ? 0 : (double) any / chatters,
                 ledger.waitPercentile(0.5), ledger.waitPercentile(0.95),
                 lastBatchSize, lastCandidates, lastPool, blockedChats, memory.fans(), recalls);
     }

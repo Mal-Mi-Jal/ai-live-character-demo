@@ -19,7 +19,12 @@ public class FanLedger {
         public String nickname;
         public int chatCount;
         public int giftTotal;
+        /** 목소리로 이름이 불린 횟수 (가장 강한 인정) */
         public int reactedCount;
+        /** 화면에 "솔라가 봤어요 ❤"로 이름이 뜬 횟수 */
+        public int screenAcked;
+        /** 묶음 인정("라면 얘기한 분들 다 봤어요")에 들어간 횟수 */
+        public int groupAcked;
         /** 마지막으로 반응 받은 시각 (없으면 -1) */
         public long lastReactedAtMs = -1;
         /** 반응을 못 받은 채로 기다리기 시작한 시각 = 마지막 반응 뒤 첫 채팅 시각 (기다리는 중이 아니면 -1) */
@@ -48,6 +53,23 @@ public class FanLedger {
         f.lastReactedAtMs = nowMs;
         f.waitingSinceMs = -1;
         reactionWaits.add(nowMs - c.receivedAtMs());
+    }
+
+    void onScreenAck(String viewerId) {
+        Fan f = fans.get(viewerId);
+        if (f != null) f.screenAcked++;
+    }
+
+    void onGroupAck(String viewerId) {
+        Fan f = fans.get(viewerId);
+        if (f != null) f.groupAcked++;
+    }
+
+    /** 목소리·화면·묶음 중 하나라도 인정을 받은 팬 수 */
+    public int anyAckFans() {
+        int n = 0;
+        for (Fan f : fans.values()) if (f.reactedCount + f.screenAcked + f.groupAcked > 0) n++;
+        return n;
     }
 
     public Fan get(String viewerId) {

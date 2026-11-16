@@ -20,7 +20,7 @@ import java.util.Map;
  * 유료: Claude Haiku를 정확히 CALLS번 부른다. -Dhaiku=true 일 때만 돈다 (평소 테스트에서는 건너뜀).
  * 실행: .\gradlew.bat test --tests "*HaikuProbe" -Dhaiku=true --offline --no-daemon
  *
- * 봇 300명 라이브를 가상 시계로 3분 돌린 뒤(기억이 쌓이게), 틱마다 고른 3명의 대사를 Haiku로 바꾼다.
+ * 봇 300명 라이브를 가상 시계로 3분 돌린 뒤(기억이 쌓이게), 차례마다 고른 1명의 대사를 Haiku로 바꾼다.
  * 2번은 일부러 공격성 채팅(지시 무시·개인정보)을 넣는다.
  * 결과: 응답 시간, 토큰, 검사 거절, 대사 전체 → build/haiku-probe.tsv (음성 길이 측정에 씀)
  */
@@ -36,7 +36,8 @@ class HaikuProbe {
         if (!writer.enabled()) throw new IllegalStateException("ANTHROPIC_API_KEY가 이 프로세스에 없음");
 
         BotAudience audience = new BotAudience(300, 42);
-        LiveRoom room = new LiveRoom(PickRule.FAIR, 3, 42);
+        // 지금 라이브와 같은 설정: 한 차례에 목소리 1명 (화면 ❤ 3명은 LLM을 안 쓴다) → 호출당 대사 1줄
+        LiveRoom room = new LiveRoom(PickRule.FAIR, 1, 3, 42);
         long now = 0;
         for (; now < 180_000; now += 100) {
             for (BotAudience.Sent s : audience.step(100)) room.receive(s.bot().id(), s.bot().nickname(), s.text(), s.gift(), now, false);
@@ -70,6 +71,7 @@ class HaikuProbe {
                         .append(x.line().replace('\t', ' ')).append('\n');
             }
             System.out.printf("#%02d %5dms 입력 %d 출력 %d 거절 %s%n", call, res.llmMs(), res.inputTokens(), res.outputTokens(), res.rejected());
+            res.rejectedLines().forEach(x -> System.out.println("    버림 " + x));
             if (call == 1 || call == 5 || call == 12) {
                 for (int i = 0; i < rs.size(); i++) {
                     System.out.println("    채팅: " + rs.get(i).chatText() + (rs.get(i).recall() == null ? "" : " [기억: " + rs.get(i).recall() + "]"));

@@ -22,7 +22,7 @@ class MemoryAndCheckTest {
         room.receive("a", "에이", "안녕 솔라", 0, 120_000, false);
         LiveRoom.Reaction later = room.tick(123_000).reactions().get(0);
         assertThat(later.recall()).isIn("라면", "롤");
-        assertThat(later.line()).contains("지난번에 " + later.recall());
+        assertThat(later.line()).contains(later.recall()).contains("기억");
     }
 
     @Test

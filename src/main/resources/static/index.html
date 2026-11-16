@@ -6,64 +6,78 @@
 <title>솔라 라이브 · 데모</title>
 <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
 <style>
-  :root { --bg:#14121c; --card:#1f1c2b; --line:#332f45; --text:#ece9f5; --muted:#9a94b3; --accent:#ffcf5a; --me:#7fd6ff; --gift:#ff8fb1; }
+  :root { --bg:#14121c; --card:#1f1c2b; --line:#332f45; --text:#ece9f5; --muted:#9a94b3; --accent:#ffcf5a; --me:#7fd6ff; --gift:#ff8fb1; --heart:#ff6b8b; }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family: "Pretendard", system-ui, -apple-system, "Malgun Gothic", sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; }
   .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 20px; margin: 0 0 12px; }
-  h1 .live { background:#e5484d; color:#fff; font-size:12px; padding:2px 8px; border-radius:6px; margin-right:6px; vertical-align: middle; }
+  h1 { font-size: 20px; margin: 0 0 12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  h1 .live { background:#e5484d; color:#fff; font-size:12px; padding:2px 8px; border-radius:6px; }
   .layout { display:grid; grid-template-columns: 1.3fr 1fr; gap:14px; }
   @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
   .card h2 { font-size:14px; color:var(--muted); margin:0 0 10px; font-weight:600; }
+  .side { display:flex; flex-direction:column; gap:14px; min-width:0; }
   /* 캐릭터 */
-  .stage { display:flex; gap:14px; align-items:flex-start; }
-  .avatar { flex:none; width:72px; height:72px; border-radius:50%; background: radial-gradient(circle at 35% 35%, #fff6c8, var(--accent) 55%, #d98a1e);
-            display:flex; align-items:center; justify-content:center; font-size:34px; box-shadow:0 0 24px #ffcf5a55; }
-  .avatar.talk { animation: glow .6s; }
-  @keyframes glow { 50% { box-shadow:0 0 44px #ffcf5acc; transform: scale(1.06);} }
-  .lines { flex:1; min-width:0; }
-  .line { background:#2a2640; border-radius:12px; padding:9px 12px; margin-bottom:8px; animation: pop .35s; }
-  .line .to { font-size:12px; color:var(--muted); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .line .to b { color:var(--text); }
-  .line.me { outline:2px solid var(--me); }
+  .stage { display:flex; gap:14px; align-items:center; }
+  .avatar { flex:none; width:84px; height:84px; border-radius:50%; background: radial-gradient(circle at 35% 35%, #fff6c8, var(--accent) 55%, #d98a1e);
+            display:flex; align-items:center; justify-content:center; font-size:40px; box-shadow:0 0 24px #ffcf5a55; }
+  .avatar.talk { animation: glow 0.9s ease-in-out infinite; }
+  @keyframes glow { 50% { box-shadow:0 0 44px #ffcf5acc; transform: scale(1.05);} }
+  .say { flex:1; min-width:0; }
+  .say .to { font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .say .to b { color:var(--text); }
+  .say .line { font-size:22px; font-weight:700; line-height:1.4; min-height:62px; overflow-wrap:anywhere; }
+  .say.me .line { color: var(--me); }
+  .bar { height:4px; background:#2a2640; border-radius:4px; margin-top:8px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--accent); }
+  .acks { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; min-height:28px; }
+  .ack { background:#3a2030; color:#ffc2d0; border-radius:999px; padding:3px 10px; font-size:13px; animation: pop .4s; }
+  .ack.me { outline:2px solid var(--me); }
   @keyframes pop { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform:none; } }
+  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:6px; margin-left:4px; background:#332f45; color:var(--muted); }
+  .tag.llm { background:#3b2f6b; color:#cdbfff; }
+  .tag.mem { background:#2f4a3b; color:#b5f0cc; }
+  .tag.group { background:#4a3a1a; color:#ffe1a1; }
+  #history div { font-size:13px; padding:4px 0; border-bottom:1px dashed var(--line); color:var(--muted); overflow-wrap:anywhere; }
+  #history b { color:var(--text); font-weight:600; }
   /* 채팅 */
-  #chat { height: 420px; overflow-y:auto; font-size:14px; line-height:1.5; }
+  #chat { height: 340px; overflow-y:auto; font-size:14px; line-height:1.5; }
   #chat div { padding:2px 0; overflow-wrap:anywhere; }
   #chat .nick { color:var(--muted); margin-right:6px; }
   #chat .gift { color:var(--gift); font-weight:700; }
   #chat .me .nick { color:var(--me); font-weight:700; }
-  #chat .hit { background:#ffcf5a22; border-radius:6px; }
   form { display:flex; gap:8px; margin-top:10px; }
   input, select, button { font:inherit; border-radius:10px; border:1px solid var(--line); background:#14121c; color:var(--text); padding:8px 10px; }
   input#text { flex:1; min-width:0; }
-  input#nick { width:96px; }
+  input#nick { width:90px; }
   button { background:var(--accent); color:#1b1500; font-weight:700; border:none; cursor:pointer; }
+  button.ghost { background:#2a2640; color:var(--text); }
   /* 숫자 */
   .stats { display:grid; grid-template-columns: repeat(2, 1fr); gap:10px; }
-  .stat .v { font-size:24px; font-weight:800; font-variant-numeric: tabular-nums; }
+  .stat .v { font-size:22px; font-weight:800; font-variant-numeric: tabular-nums; }
   .stat .l { font-size:12px; color:var(--muted); }
-  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
-  .muted { color:var(--muted); font-size:12px; }
-  .side { display:flex; flex-direction:column; gap:14px; }
-  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:6px; margin-left:4px; background:#332f45; color:var(--muted); }
-  .tag.llm { background:#3b2f6b; color:#cdbfff; }
-  .tag.mem { background:#2f4a3b; color:#b5f0cc; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
+  .muted { color:var(--muted); font-size:12px; line-height:1.6; }
   .llmbox { font-size:13px; line-height:1.7; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1><span class="live">LIVE</span>솔라의 별빛 라디오 <span class="muted" id="conn">연결 중…</span></h1>
+  <h1><span class="live">LIVE</span>솔라의 별빛 라디오 <button class="ghost" id="sound">🔈 소리 켜기</button> <span class="muted" id="conn">연결 중…</span></h1>
   <div class="layout">
     <div class="side">
       <div class="card">
-        <h2>캐릭터 · 솔라 (지구에 막 떨어진 꼬마 별)</h2>
+        <h2>솔라 (지구에 막 떨어진 꼬마 별) · 입은 하나라서 한 번에 한 명</h2>
         <div class="stage">
           <div class="avatar" id="avatar">⭐</div>
-          <div class="lines" id="lines"><div class="muted">곧 첫 반응이 나와요…</div></div>
+          <div class="say" id="say">
+            <div class="to" id="to">곧 첫 대사가 나와요…</div>
+            <div class="line" id="line"></div>
+            <div class="bar"><i id="bar"></i></div>
+          </div>
         </div>
+        <div class="acks" id="acks"></div>
+        <div class="muted">❤ = 목소리 대신 화면에 이름을 띄워 "봤어요"를 알리는 팬</div>
       </div>
       <div class="card">
         <h2>채팅 <span id="rate" class="muted"></span></h2>
@@ -90,12 +104,12 @@
       <div class="card">
         <h2>숫자</h2>
         <div class="stats">
-          <div class="stat"><div class="v" id="ratio">-</div><div class="l">반응 받은 팬 / 채팅한 팬</div></div>
-          <div class="stat"><div class="v" id="fans">-</div><div class="l">반응 받은 팬 수 / 채팅한 팬 수</div></div>
-          <div class="stat"><div class="v" id="p50">-</div><div class="l">채팅 → 반응 대기 p50</div></div>
-          <div class="stat"><div class="v" id="p95">-</div><div class="l">채팅 → 반응 대기 p95</div></div>
-          <div class="stat"><div class="v" id="batch">-</div><div class="l">이번 틱 채팅 / 후보(1인 1줄) / 못 받은 30초 포함</div></div>
-          <div class="stat"><div class="v" id="proc">-</div><div class="l">틱 처리 시간 (서버)</div></div>
+          <div class="stat"><div class="v" id="voiceRatio">-</div><div class="l">목소리로 이름 불린 팬 / 채팅한 팬</div></div>
+          <div class="stat"><div class="v" id="anyRatio">-</div><div class="l">목소리·화면·묶음 중 하나라도 인정 받은 팬</div></div>
+          <div class="stat"><div class="v" id="start50">-</div><div class="l">채팅 → 목소리 시작 p50</div></div>
+          <div class="stat"><div class="v" id="start95">-</div><div class="l">채팅 → 목소리 시작 p95</div></div>
+          <div class="stat"><div class="v" id="tpm">-</div><div class="l">1분에 말한 차례 (묶음 포함)</div></div>
+          <div class="stat"><div class="v" id="pool">-</div><div class="l">답 기다리는 채팅 (최근 30초, 1인 1줄)</div></div>
         </div>
         <div class="muted" style="margin-top:10px" id="meta"></div>
       </div>
@@ -103,15 +117,45 @@
         <h2>대사 말투 (Claude Haiku) · 누구에게 무엇을 말할지는 코드가 정하고, Haiku는 말투만</h2>
         <div class="llmbox" id="llm">-</div>
       </div>
+      <div class="card">
+        <h2>지난 대사</h2>
+        <div id="history"></div>
+      </div>
     </div>
   </div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 // 이 탭의 시청자 id. 새로고침해도 같은 사람으로 남게 sessionStorage에 둔다
 function makeId() { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, "0")).join(""); }
-let me = sessionStorage.getItem("viewerId"); if (!me) { me = makeId(); sessionStorage.setItem("viewerId", me); }
-$("nick").value = sessionStorage.getItem("nick") || "";
+let me = null, nickSaved = "";
+try { me = sessionStorage.getItem("viewerId"); nickSaved = sessionStorage.getItem("nick") || ""; } catch (e) {}
+if (!me) { me = makeId(); try { sessionStorage.setItem("viewerId", me); } catch (e) {} }
+$("nick").value = nickSaved;
+const myNick = () => $("nick").value.trim() || "나";
+
+// 감정 값 → 표정. 실제 서비스라면 이 값이 Live2D 표정·음성 톤으로 넘어간다
+const FACE = { HAPPY: "😊", EXCITED: "🤩", TOUCHED: "🥹", THINKING: "🤔", CALM: "😌" };
+
+// 브라우저 내장 음성(무료). 소리는 사용자가 버튼을 누른 뒤에만 낼 수 있다 (브라우저 규칙)
+let soundOn = false, koVoice = null;
+function pickVoice() { const vs = speechSynthesis.getVoices(); koVoice = vs.find(v => v.lang && v.lang.startsWith("ko")) || null; }
+if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+$("sound").onclick = () => {
+  if (!("speechSynthesis" in window)) { $("sound").textContent = "이 브라우저는 음성 없음"; return; }
+  soundOn = !soundOn;
+  $("sound").textContent = soundOn ? "🔊 소리 끄기" : "🔈 소리 켜기";
+  if (!soundOn) speechSynthesis.cancel();
+};
+function speak(text) {
+  if (!soundOn) return;
+  // 라이브라 밀리면 안 된다: 앞 대사가 남아 있으면 끊고 지금 대사를 말한다
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ko-KR"; if (koVoice) u.voice = koVoice;
+  speechSynthesis.speak(u);
+}
 
 const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
 client.onConnect = () => {
@@ -119,7 +163,7 @@ client.onConnect = () => {
   client.subscribe("/app/state", m => renderState(JSON.parse(m.body)));
   client.subscribe("/topic/state", m => renderState(JSON.parse(m.body)));
   client.subscribe("/topic/chat", m => renderChat(JSON.parse(m.body)));
-  client.subscribe("/topic/tick", m => renderTick(JSON.parse(m.body)));
+  client.subscribe("/topic/speak", m => renderSpeak(JSON.parse(m.body)));
 };
 client.onWebSocketClose = () => { $("conn").textContent = "연결 끊김 · 다시 연결 중…"; };
 client.activate();
@@ -131,20 +175,17 @@ $("bots").onchange = () => control({ bots: Number($("bots").value) });
 $("form").onsubmit = e => {
   e.preventDefault();
   const text = $("text").value.trim(); if (!text || !client.connected) return;
-  const nickname = $("nick").value.trim() || "나";
-  sessionStorage.setItem("nick", nickname);
-  client.publish({ destination: "/app/chat", body: JSON.stringify({ viewerId: me, nickname, text }) });
+  try { sessionStorage.setItem("nick", myNick()); } catch (err) {}
+  client.publish({ destination: "/app/chat", body: JSON.stringify({ viewerId: me, nickname: myNick(), text }) });
   $("text").value = "";
 };
-
-function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 function renderState(s) {
   const sel = $("rule");
   if (!sel.options.length) s.rules.forEach(r => sel.append(new Option(r.label, r.id)));
   sel.value = s.rule; $("bots").value = String(s.bots);
-  $("cfg").textContent = `${s.tickMs / 1000}초마다 채팅을 묶어서 보고, 한 번에 ${s.k}명에게 반응해요. 한 사람이 여러 번 말해도 후보는 한 줄.`;
-  renderStats(s.stats); renderLlm(s.llm);
+  $("cfg").textContent = `한 차례에 목소리로 1명 + 화면 ❤ ${s.screenK}명. ${s.groupEvery}차례마다 한 번은 같은 이야기를 한 3명 이상을 한 줄로 알아봐요. 대사는 짧게(35자 안팎), 읽는 시간만큼 기다렸다 다음 차례.`;
+  renderStats(s.stats, s.voice); renderLlm(s.llm);
 }
 
 let chatCount = 0, chatWindowStart = Date.now();
@@ -153,7 +194,6 @@ function renderChat(list) {
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
   for (const c of list) {
     const row = el("div", c.human ? "me" : "");
-    row.dataset.seq = c.seq;
     row.append(el("span", "nick", c.nickname));
     if (c.gift > 0) row.append(el("span", "gift", `🎁 ${c.gift.toLocaleString()}원 `));
     row.append(document.createTextNode(c.text)); // textContent로만 넣는다 (채팅 속 태그가 실행되지 않게)
@@ -166,34 +206,62 @@ function renderChat(list) {
   if (sec > 5) { $("rate").textContent = `· 초당 약 ${(chatCount / sec).toFixed(1)}줄`; chatCount = 0; chatWindowStart = Date.now(); }
 }
 
-function renderTick(t) {
-  // LLM 응답 시간이 틱마다 달라서 순서가 뒤집혀 도착할 수 있다 → 지난 틱 결과는 버린다 (리셋하면 1부터)
-  if (t.tickNo !== 1 && t.tickNo <= lastTick) return;
-  lastTick = t.tickNo;
-  const box = $("lines");
-  if (t.reactions.length) {
-    box.replaceChildren();
-    for (const r of t.reactions) {
-      const d = el("div", "line" + (r.human ? " me" : ""));
-      const to = el("div", "to");
-      to.append(el("b", null, r.nickname), document.createTextNode(` · "${r.chatText}"` + (r.gift ? ` 🎁${r.gift.toLocaleString()}` : "") + ` · ${(r.waitMs / 1000).toFixed(1)}초 대기`));
-      to.append(el("span", "tag" + (r.source === "llm" ? " llm" : ""), r.source === "llm" ? "Haiku" : "템플릿"));
-      if (r.recall) to.append(el("span", "tag mem", `기억: ${r.recall}`));
-      d.append(to, el("div", null, `${FACE[r.emotion] || ""} ${r.line}`));
-      box.append(d);
-    }
-    const a = $("avatar"); a.textContent = FACE[t.reactions[0].emotion] || "⭐";
-    a.classList.remove("talk"); void a.offsetWidth; a.classList.add("talk");
-  }
-  renderStats(t.stats);
-  $("proc").textContent = `${t.tickProcessMs.toFixed(2)}ms` + (t.llmMs ? ` + LLM ${(t.llmMs / 1000).toFixed(1)}초` : "");
-  renderLlm(t.llm);
-  $("meta").textContent = `${t.ruleLabel} · 봇 ${t.bots}명 · 틱 ${t.tickNo}번째 · 누적 채팅 ${t.stats.totalChats.toLocaleString()}줄 · 기억 있는 팬 ${t.stats.rememberedFans}명, 기억 꺼낸 횟수 ${t.stats.recalls}` + (t.stats.blockedChats ? ` · 금칙어로 뺀 채팅 ${t.stats.blockedChats}` : "");
+function showLine(toNodes, line, face, isMe, speakMs) {
+  const to = $("to"); to.replaceChildren(...toNodes);
+  $("say").classList.toggle("me", !!isMe);
+  $("line").textContent = `${face} ${line}`;
+  const a = $("avatar"); a.textContent = face || "⭐"; a.classList.add("talk");
+  clearTimeout(showLine.t); showLine.t = setTimeout(() => a.classList.remove("talk"), speakMs);
+  // 진행 막대 = 이 대사를 읽는 시간
+  const bar = $("bar"); bar.style.transition = "none"; bar.style.width = "0";
+  void bar.offsetWidth; bar.style.transition = `width ${speakMs}ms linear`; bar.style.width = "100%";
+  speak(line);
 }
 
-// 감정 값 → 표정. 실제 서비스라면 이 값이 Live2D 표정·음성 톤으로 넘어간다
-const FACE = { HAPPY: "😊", EXCITED: "🤩", TOUCHED: "🥹", THINKING: "🤔", CALM: "😌" };
-let lastTick = 0;
+function addHistory(nodes) {
+  const box = $("history"); const d = el("div"); d.append(...nodes);
+  box.prepend(d); while (box.childElementCount > 8) box.lastElementChild.remove();
+}
+
+function renderSpeak(t) {
+  if (t.kind === "group") {
+    const g = t.group;
+    const names = g.nicknames.slice(0, 4).join(", ") + (g.nicknames.length > 4 ? ` 외 ${g.nicknames.length - 4}명` : "");
+    showLine([el("span", "tag group", `묶음 인정 · ${g.label} ${g.count}명`), document.createTextNode(` ${names}`)],
+      g.line, "🤩", g.nicknames.includes(myNick()), t.speakMs);
+    $("acks").replaceChildren();
+    addHistory([el("b", null, `[묶음 ${g.count}명] `), document.createTextNode(g.line)]);
+  } else {
+    const r = t.reaction;
+    const to = [el("b", null, r.nickname), document.createTextNode(` · "${r.chatText}"` + (r.gift ? ` 🎁${r.gift.toLocaleString()}` : "") + ` · ${(r.waitMs / 1000).toFixed(1)}초 대기`),
+                el("span", "tag" + (r.source === "llm" ? " llm" : ""), r.source === "llm" ? "Haiku" : "템플릿")];
+    if (r.recall) to.push(el("span", "tag mem", `기억: ${r.recall}`));
+    showLine(to, r.line, FACE[r.emotion] || "", r.human, t.speakMs);
+    const acks = $("acks"); acks.replaceChildren();
+    for (const a of t.screenAcks) {
+      const chip = el("span", "ack", `❤ ${a.nickname}`);
+      chip.title = a.chatText;
+      if (a.viewerId.startsWith("me-")) chip.classList.add("me");
+      acks.append(chip);
+    }
+    addHistory([el("b", null, r.nickname + " "), document.createTextNode(r.line)]);
+  }
+  renderStats(t.stats, t.voice); renderLlm(t.llm);
+  $("meta").textContent = `${t.ruleLabel} · 봇 ${t.bots}명 · ${t.turn}번째 차례` + (t.llmMs ? ` · 이번 대사 Haiku ${(t.llmMs / 1000).toFixed(1)}초` : "")
+    + ` · 기억 있는 팬 ${t.stats.rememberedFans}명, 기억 꺼낸 횟수 ${t.stats.recalls}` + (t.stats.blockedChats ? ` · 금칙어로 뺀 채팅 ${t.stats.blockedChats}` : "");
+}
+
+function renderStats(s, v) {
+  const pct = (n, d) => d ? `${(n / d * 100).toFixed(1)}%` : "-";
+  $("voiceRatio").textContent = s.chatters ? `${pct(s.reactedFans, s.chatters)} (${s.reactedFans}/${s.chatters})` : "-";
+  $("anyRatio").textContent = s.chatters ? `${pct(s.anyAckFans, s.chatters)} (${s.anyAckFans})` : "-";
+  $("pool").textContent = `${s.lastPool}줄`;
+  if (v) {
+    $("start50").textContent = v.startP50Ms ? `${(v.startP50Ms / 1000).toFixed(1)}초` : "-";
+    $("start95").textContent = v.startP95Ms ? `${(v.startP95Ms / 1000).toFixed(1)}초` : "-";
+    $("tpm").textContent = `${v.turnsPerMin.toFixed(1)}번` + (v.groupTurns ? ` (묶음 ${v.groupTurns})` : "");
+  }
+}
 
 function renderLlm(l) {
   if (!l) return;
@@ -205,14 +273,6 @@ function renderLlm(l) {
     el("div", null, `호출 ${l.callsUsed} / 상한 ${l.maxCalls}번 · 응답 p50 ${(l.llmP50Ms / 1000).toFixed(1)}초, p95 ${(l.llmP95Ms / 1000).toFixed(1)}초`),
     el("div", null, `Haiku 대사 ${l.llmLines}줄 · 템플릿 ${l.templateLines}줄 · 검사·시간초과로 바꾼 이유: ${rej}`),
     el("div", null, `토큰 입력 ${l.inputTokens.toLocaleString()} / 출력 ${l.outputTokens.toLocaleString()} · 추정 비용 $${cost.toFixed(4)}`));
-}
-
-function renderStats(s) {
-  $("ratio").textContent = s.chatters ? `${(s.reactedRatio * 100).toFixed(1)}%` : "-";
-  $("fans").textContent = `${s.reactedFans} / ${s.chatters}`;
-  $("p50").textContent = s.reactedFans ? `${(s.waitP50Ms / 1000).toFixed(1)}초` : "-";
-  $("p95").textContent = s.reactedFans ? `${(s.waitP95Ms / 1000).toFixed(1)}초` : "-";
-  $("batch").textContent = `${s.lastBatchSize} / ${s.lastCandidates} / ${s.lastPool}`;
 }
 </script>
 </body>
