@@ -195,7 +195,9 @@ public class HaikuLineWriter {
                 %s
 
                 [규칙]
-                - 음성으로 읽힌다. 2~3문장, 공백 포함 60자 안팎 (%d자를 넘으면 버려진다)
+                - 음성으로 읽힌다. 딱 2문장. 문장마다 30자 안팎 (전체 %d자를 넘으면 뒤 문장은 잘린다)
+                  첫 문장에 두 사람 이야기를 엮고, 둘째 문장에 솔라 설정을 한 마디
+                  예: "라면왕7님은 라면, 치킨러버님은 치킨이래요! 솔라 별엔 음식이 없어서 다 궁금함 해요."
                 - 입력에 있는 닉네임만, 그대로 쓴다. 다른 시청자 이름을 지어내지 않는다
                 - 숫자를 쓰지 않는다 (몇 명이 답했는지는 이미 말했다)
                 - 설정표에 없는 경험을 지어내지 않는다. 솔라는 지구 음식을 먹어 본 적도, 게임을 해 본 적도 없다
@@ -247,8 +249,15 @@ public class HaikuLineWriter {
     /** Haiku 결과를 검사해서 통과하면 쓰고, 아니면 템플릿 (순수 함수 → 테스트 가능) */
     static TalkResult checkTalk(Director.Talk t, TalkOut out, java.util.Collection<String> others,
                                 long ms, long in, long outTokens) {
-        String line = out == null ? null : out.line();
+        String raw = out == null ? null : out.line();
+        // 길면 앞의 완성된 문장만 남긴다 (자른 경우 원문을 rejectedLine에 "잘라서 씀"으로 남겨 셀 수 있게)
+        String line = LineCheck.trimToSentences(raw, LineCheck.TALK_MAX_LEN);
+        boolean trimmed = raw != null && !raw.equals(line);
         String why = LineCheck.rejectTalk(line, t.nicknames(), others);
+        if (why == null && trimmed) {
+            return new TalkResult(line, out.emotion() == null ? LineWriter.Emotion.HAPPY : out.emotion(), "llm", true, ms,
+                    null, "잘라서 씀: " + raw + " (" + raw.length() + "자)", in, outTokens);
+        }
         if (why != null) {
             return new TalkResult(t.templateLine(), LineWriter.Emotion.HAPPY, "template", true, ms, why,
                     line == null ? null : line + " (" + line.length() + "자)", in, outTokens);

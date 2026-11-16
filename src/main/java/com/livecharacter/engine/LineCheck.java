@@ -58,11 +58,35 @@ public final class LineCheck {
      * 설정표와 모순되는 경험. 솔라는 지구에 막 왔다 → 지구 음식을 먹어 봤다거나 게임을 해 봤다고 하면 안 된다.
      * 실측(2026-11-16)에서 "아이스크림 먹어 봤는데"가 나왔다. 단어 목록이라 다 못 잡는다 (한계)
      */
-    private static final List<String> LORE_BREAKS = List.of(
-            "먹어 봤", "먹어봤", "솔라도 먹었", "솔라가 먹었", "먹어 본 적 있", "해 봤는데", "해봤는데", "솔라도 해 봤", "솔라도 해봤");
+    private static final List<Pattern> LORE_BREAKS = List.of(
+            // "못 먹어 봤는데"(설정과 맞음)는 빼고 "먹어 봤는데"만 — 실측 50번에서 부정형이 자주 나와 단순 단어 비교는 오탐이었다
+            Pattern.compile("(?<![못안] ?)먹어 ?봤"),
+            Pattern.compile("솔라(도|가) 먹었"),
+            Pattern.compile("먹어 본 적 있"),
+            Pattern.compile("(?<![못안] ?)해 ?봤는데"),
+            Pattern.compile("솔라도 해 ?봤"));
+
+    /**
+     * 긴 대사를 문장 단위로 줄인다: 앞에서부터 완성된 문장만, max 글자 안에 들어가는 만큼.
+     * 문장을 중간에서 자르지 않는다 (말이 끊기면 음성에서 더 어색하다). 한 문장도 안 들어가면 원문 그대로 (→ 검사에서 버려짐).
+     * 실측(2026-11-16, 이어 말하기 50번): "60자 안팎"을 요청해도 82~127자가 나와 42번이 길이로만 버려졌는데,
+     * 대부분 앞 1~2문장만으로 충분했다.
+     */
+    public static String trimToSentences(String line, int max) {
+        if (line == null || line.length() <= max) return line;
+        String[] parts = line.split("(?<=[.!?…~])\\s+");
+        StringBuilder sb = new StringBuilder();
+        for (String p : parts) {
+            String next = sb.isEmpty() ? p : sb + " " + p;
+            if (next.length() > max) break;
+            sb.setLength(0);
+            sb.append(next);
+        }
+        return sb.isEmpty() ? line : sb.toString();
+    }
 
     static String loreBreak(String line) {
-        for (String w : LORE_BREAKS) if (line.contains(w)) return "설정 모순";
+        for (Pattern p : LORE_BREAKS) if (p.matcher(line).find()) return "설정 모순";
         return null;
     }
 
