@@ -2,6 +2,7 @@ package com.livecharacter.live;
 
 import com.livecharacter.engine.Chat;
 import com.livecharacter.engine.Director;
+import com.livecharacter.engine.DonationQueue;
 import com.livecharacter.engine.LiveRoom;
 import com.livecharacter.engine.PickRule;
 import com.livecharacter.llm.HaikuLineWriter;
@@ -56,6 +57,16 @@ public class LiveService {
     public record RuleView(String id, String label) {
     }
 
+    /** 후원 읽기 차례. readText = 시스템 목소리(후원 알림), thanks = 캐릭터 감사 인사 */
+    public record DonationSpeak(int turn, String kind, List<DonationQueue.Donation> items, String readText,
+                                String thanks, long speakMs, DonationQueue.Stats stats,
+                                List<DonationQueue.Donation> queue, Director.Status topic) {
+    }
+
+    /** 후원 대기열 화면용 (새 후원이 들어올 때마다) */
+    public record DonationBoard(List<DonationQueue.Donation> queue, DonationQueue.Stats stats) {
+    }
+
     /**
      * 한 차례 말하기. kind = "fan"(한 명 이름 부르기) 또는 "group"(묶음 인정).
      * speakMs = 이 대사를 읽는 데 걸리는 시간 (서버가 다음 차례를 이만큼 뒤에 연다)
@@ -102,6 +113,14 @@ public class LiveService {
     private volatile LiveRoom.LiveSummary lastLive;
     /** 다음 차례에 무엇을 할지 정하는 진행자 (떡밥 → 질문 → 답 모으기 → 정리 → 주제 이어 가기) */
     private volatile Director director = new Director();
+    /** 후원 대기열 (라이브마다 새로) */
+    private volatile DonationQueue donations = new DonationQueue();
+    /** 채팅창에 띄울 후원 채팅 (후원은 방의 일반 채팅 후보로 넣지 않는다 — 감사는 대기열이 맡음) */
+    private final List<ChatView> donationChats = new ArrayList<>();
+    private boolean donationsChanged;
+    private long donationSeq;
+    private volatile boolean lastWasDonation;
+    private final double botGiftScale;
     /** 다음 라이브 첫 차례에 말할 오프닝 (지난 라이브 요약) */
     private volatile String pendingOpening;
     private ScheduledExecutorService scheduler;
@@ -112,6 +131,7 @@ public class LiveService {
                        @Value("${live.screen-acks}") int screenK,
                        @Value("${live.group-every}") int groupEvery,
                        @Value("${live.voice-max-age-ms}") long voiceMaxAgeMs,
+                       @Value("${live.bot-gift-scale}") double botGiftScale,
                        @Value("${live.bots}") int bots,
                        @Value("${live.chat-flush-ms}") int chatFlushMs,
                        @Value("${live.bot-step-ms}") int botStepMs,
@@ -126,7 +146,8 @@ public class LiveService {
         this.botStepMs = botStepMs;
         this.seed = seed;
         this.room = new LiveRoom(rule, 1, screenK, voiceMaxAgeMs, seed);
-        this.audience = new BotAudience(bots, seed);
+        this.botGiftScale = botGiftScale;
+        this.audience = new BotAudience(bots, seed, botGiftScale);
     }
 
     @PostConstruct
@@ -168,18 +189,46 @@ public class LiveService {
     private void botStep() {
         long now = System.currentTimeMillis();
         for (BotAudience.Sent s : audience.step(botStepMs)) {
-            room.receive(s.bot().id(), s.bot().nickname(), s.text(), s.gift(), now, false);
+            if (s.gift() > 0) donate(s.bot().id(), s.bot().nickname(), s.gift(), s.text(), false, now);
+            else room.receive(s.bot().id(), s.bot().nickname(), s.text(), 0, now, false);
         }
     }
 
+    /** 후원: 대기열에 넣고, 채팅창에도 강조해서 띄운다 */
+    private void donate(String viewerId, String nickname, int amount, String text, boolean human, long now) {
+        DonationQueue.Donation d = donations.offer(viewerId, nickname, amount, text, human, now);
+        synchronized (donationChats) {
+            donationChats.add(new ChatView(-(++donationSeq), d.nickname(), d.message() == null ? "" : d.message(), amount, human));
+            donationsChanged = true;
+        }
+    }
+
+    public void humanDonate(String viewerId, String nickname, Integer amount, String text) {
+        if (viewerId == null || !VIEWER_ID.matcher(viewerId).matches() || amount == null
+                || !Set.of(1000, 5000, 10000).contains(amount)) return;
+        String nick = nickname == null || nickname.isBlank() ? "나" : nickname.strip();
+        if (nick.length() > 12) nick = nick.substring(0, 12);
+        donate("me-" + viewerId, nick, amount, text == null ? "" : text, true, System.currentTimeMillis());
+    }
+
     private void flushChat() {
+        List<ChatView> extra;
+        boolean changed;
+        synchronized (donationChats) {
+            extra = List.copyOf(donationChats);
+            donationChats.clear();
+            changed = donationsChanged;
+            donationsChanged = false;
+        }
+        if (changed) template.convertAndSend("/topic/donations", new DonationBoard(donations.snapshot(), donations.stats()));
         List<Chat> chats = room.takeUnflushed();
-        if (chats.isEmpty()) return;
+        if (chats.isEmpty() && extra.isEmpty()) return;
         // 화면에는 최근 것만 보이면 된다. 1000명일 때 0.5초 묶음이 수십 개라도 한 메시지로 간다
         List<ChatView> view = chats.stream()
                 .skip(Math.max(0, chats.size() - 60))
                 .map(c -> new ChatView(c.seq(), c.nickname(), c.text(), c.gift(), c.human()))
-                .toList();
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        view.addAll(extra);
         template.convertAndSend("/topic/chat", view);
     }
 
@@ -212,6 +261,15 @@ public class LiveService {
             return;
         }
         Director d = director;
+        // 후원: 떡밥 구간이 아니면 한 차례씩 번갈아 읽는다 (일반 채팅 차례를 다 빼앗지 않게).
+        // 떡밥 구간 중이면 보류, 너무 쌓이면 메시지를 건너뛰고 한 줄로 묶어 감사
+        DonationQueue.Plan dp = donations.next(now, d.inSegment(), !lastWasDonation);
+        if (dp.kind() != DonationQueue.Kind.NONE) {
+            lastWasDonation = true;
+            speakDonation(turnNo, dp);
+            return;
+        }
+        lastWasDonation = false;
         boolean groupTurn = groupEvery > 0 && turnNo % groupEvery == 0;
         Director.Plan plan = d.next(now, room.hotTopics(now), groupTurn);
 
@@ -289,6 +347,18 @@ public class LiveService {
                             ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
                     scheduleTurn(ms);
                 });
+    }
+
+    private void speakDonation(int turnNo, DonationQueue.Plan dp) {
+        long ms = (dp.readText() == null ? 0 : speakMs(dp.readText())) + speakMs(dp.thanks());
+        synchronized (statsLock) {
+            turns++;
+            remember(dp.thanks());
+        }
+        template.convertAndSend("/topic/donation-speak", new DonationSpeak(turnNo, dp.kind().name(), dp.items(),
+                dp.readText(), dp.thanks(), ms, donations.stats(), donations.snapshot(),
+                director.status(System.currentTimeMillis())));
+        scheduleTurn(ms);
     }
 
     /** 질문·답 정리·묶음 인정처럼 한 사람에게 하는 말이 아닌 차례 (템플릿, LLM 안 씀) */
@@ -374,6 +444,7 @@ public class LiveService {
      */
     public synchronized void nextLive() {
         lastLive = room.startNextLive();
+        donations = new DonationQueue();
         director = new Director();
         audience.answering(null);
         pendingOpening = lastLive.openingLine();
@@ -389,7 +460,8 @@ public class LiveService {
     /** 규칙이나 봇 수를 바꾸면 숫자를 처음부터 다시 센다 (LLM 호출 수·비용은 서버를 켠 동안 누적) */
     public synchronized void control(String ruleId, Integer bots) {
         if (ruleId != null) rule = PickRule.byId(ruleId);
-        if (bots != null && ALLOWED_BOTS.contains(bots)) audience = new BotAudience(bots, seed);
+        if (bots != null && ALLOWED_BOTS.contains(bots)) audience = new BotAudience(bots, seed, botGiftScale);
+        donations = new DonationQueue();
         room.reset(rule);
         director = new Director();
         synchronized (statsLock) {

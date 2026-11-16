@@ -19,6 +19,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws").setAllowedOriginPatterns("*");
+        // 같은 연결에서 온 메시지는 보낸 순서대로 처리한다. 없으면 여러 스레드가 나눠 처리해서
+        // 후원 3개를 연달아 보냈을 때 2 → 3 → 1 순서로 대기열에 들어갔다 (2026-11-17 화면 확인 중 발견)
+        registry.setPreserveReceiveOrder(true);
     }
 
     @Override

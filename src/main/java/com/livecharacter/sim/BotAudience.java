@@ -47,6 +47,14 @@ public class BotAudience {
     }
 
     public BotAudience(int n, long seed) {
+        this(n, seed, 1.0);
+    }
+
+    /**
+     * @param giftScale 선물 확률 배율. 시뮬레이션은 1.0, 화면 데모는 후원이 너무 몰리지 않게 낮춘다
+     *                  (1.0이면 300명일 때 분당 약 18건 — 음성으로는 분당 10번 남짓만 말할 수 있다)
+     */
+    public BotAudience(int n, long seed, double giftScale) {
         this.rnd = new Random(seed);
         Random setup = new Random(seed * 31 + 7);
         List<Bot> list = new ArrayList<>(n);
@@ -59,7 +67,7 @@ public class BotAudience {
                 case NORMAL -> 25_000;
                 case QUIET -> 90_000;
             };
-            double giftChance = kind == Kind.WHALE ? 0.6 : 0.02;
+            double giftChance = (kind == Kind.WHALE ? 0.6 : 0.02) * giftScale;
             String nick = ADJ[setup.nextInt(ADJ.length)] + NOUN[setup.nextInt(NOUN.length)] + (i + 1);
             list.add(new Bot("bot-" + (i + 1), nick, kind, mean, giftChance));
         }

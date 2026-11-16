@@ -270,6 +270,11 @@ public class Director {
         return new Status(null, false, 0, null);
     }
 
+    /** 떡밥 구간(질문해서 답 모으는 중, 또는 정리 뒤 이어 말하기 차례 대기) — 이때는 후원 읽기를 보류한다 */
+    public synchronized boolean inSegment() {
+        return active != null || talkPending;
+    }
+
     public synchronized Question active() {
         return active;
     }

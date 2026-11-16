@@ -6,134 +6,227 @@
 <title>솔라 라이브 · 데모</title>
 <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
 <style>
-  :root { --bg:#14121c; --card:#1f1c2b; --line:#332f45; --text:#ece9f5; --muted:#9a94b3; --accent:#ffcf5a; --me:#7fd6ff; --gift:#ff8fb1; --heart:#ff6b8b; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 20px; margin: 0 0 12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  h1 .live { background:#e5484d; color:#fff; font-size:12px; padding:2px 8px; border-radius:6px; }
-  .layout { display:grid; grid-template-columns: 1.3fr 1fr; gap:14px; }
-  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
-  .card h2 { font-size:14px; color:var(--muted); margin:0 0 10px; font-weight:600; }
-  .side { display:flex; flex-direction:column; gap:14px; min-width:0; }
-  /* 캐릭터 */
-  .stage { display:flex; gap:14px; align-items:center; }
-  .avatar { flex:none; width:84px; height:84px; border-radius:50%; background: radial-gradient(circle at 35% 35%, #fff6c8, var(--accent) 55%, #d98a1e);
-            display:flex; align-items:center; justify-content:center; font-size:40px; box-shadow:0 0 24px #ffcf5a55; }
-  .avatar.talk { animation: glow 0.9s ease-in-out infinite; }
-  @keyframes glow { 50% { box-shadow:0 0 44px #ffcf5acc; transform: scale(1.05);} }
-  .say { flex:1; min-width:0; }
-  .say .to { font-size:12px; color:var(--muted); margin-bottom:4px; }
-  .say .to b { color:var(--text); }
-  .say .line { font-size:22px; font-weight:700; line-height:1.4; min-height:62px; overflow-wrap:anywhere; }
-  .say.me .line { color: var(--me); }
-  .bar { height:4px; background:#2a2640; border-radius:4px; margin-top:8px; overflow:hidden; }
-  .bar i { display:block; height:100%; width:0; background:var(--accent); }
-  .acks { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; min-height:28px; }
-  .ack { background:#3a2030; color:#ffc2d0; border-radius:999px; padding:3px 10px; font-size:13px; animation: pop .4s; }
-  .ack.me { outline:2px solid var(--me); }
-  @keyframes pop { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform:none; } }
-  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:6px; margin-left:4px; background:#332f45; color:var(--muted); }
-  .tag.llm { background:#3b2f6b; color:#cdbfff; }
-  .tag.mem { background:#2f4a3b; color:#b5f0cc; }
-  .tag.group { background:#4a3a1a; color:#ffe1a1; }
-  .tag.ask { background:#1f3f55; color:#a9e1ff; }
-  .topic { margin-top:10px; padding:8px 12px; border-radius:10px; background:#2a2640; font-size:13px; color:var(--muted); }
-  .topic b { color:var(--text); }
-  .topic.asking { background:#1f3f55; color:#cfeeff; }
-  #history div { font-size:13px; padding:4px 0; border-bottom:1px dashed var(--line); color:var(--muted); overflow-wrap:anywhere; }
-  #history b { color:var(--text); font-weight:600; }
-  /* 채팅 */
-  #chat { height: 340px; overflow-y:auto; font-size:14px; line-height:1.5; }
-  #chat div { padding:2px 0; overflow-wrap:anywhere; }
-  #chat .nick { color:var(--muted); margin-right:6px; }
-  #chat .gift { color:var(--gift); font-weight:700; }
-  #chat .me .nick { color:var(--me); font-weight:700; }
-  form { display:flex; gap:8px; margin-top:10px; }
-  input, select, button { font:inherit; border-radius:10px; border:1px solid var(--line); background:#14121c; color:var(--text); padding:8px 10px; }
-  input#text { flex:1; min-width:0; }
-  input#nick { width:90px; }
-  button { background:var(--accent); color:#1b1500; font-weight:700; border:none; cursor:pointer; }
-  button.ghost { background:#2a2640; color:var(--text); }
-  /* 숫자 */
-  .stats { display:grid; grid-template-columns: repeat(2, 1fr); gap:10px; }
-  .stat .v { font-size:22px; font-weight:800; font-variant-numeric: tabular-nums; }
+  :root {
+    --bg:#0e0f14; --panel:#16171f; --panel2:#1d1f29; --line:#2a2c38; --text:#eceaf4; --muted:#8f8ca3;
+    --accent:#b59bff; --accent2:#ffcf5a; --live:#ff4d5e; --me:#7fd6ff; --gift:#ffb36b; --heart:#ff7aa2;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; }
+  button, input, select { font:inherit; color:var(--text); }
+  button { cursor:pointer; }
+
+  /* ---------- 상단 바 ---------- */
+  .topbar { height:52px; display:flex; align-items:center; gap:12px; padding:0 16px; border-bottom:1px solid var(--line); background:#111219; }
+  .brand { font-weight:800; letter-spacing:-.3px; display:flex; align-items:center; gap:8px; }
+  .brand .dot { width:22px; height:22px; border-radius:50%; background:radial-gradient(circle at 35% 35%, #fff4c4, var(--accent2) 60%, #c47a12); }
+  .topbar .sp { flex:1; }
+  .pill { border:1px solid var(--line); background:var(--panel2); border-radius:999px; padding:6px 12px; font-size:13px; }
+  .pill.on { border-color:var(--accent); color:#fff; background:#2a2346; }
+  .muted { color:var(--muted); font-size:12px; }
+
+  /* ---------- 레이아웃 ---------- */
+  .page { display:grid; grid-template-columns: minmax(0,1fr) 360px; height:calc(100% - 52px); }
+  .main { overflow-y:auto; padding:16px; min-width:0; }
+  .side { border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
+  @media (max-width: 900px) {
+    .page { grid-template-columns: 1fr; height:auto; }
+    .side { border-left:none; border-top:1px solid var(--line); height:70vh; }
+    .main { padding:12px 16px; }
+  }
+
+  /* ---------- 방송 화면 ---------- */
+  .player { position:relative; width:100%; aspect-ratio:16/9; border-radius:14px; overflow:hidden;
+    background:
+      radial-gradient(2px 2px at 12% 18%, #fff8, transparent 60%), radial-gradient(1.5px 1.5px at 72% 12%, #fff9, transparent 60%),
+      radial-gradient(2px 2px at 85% 40%, #fff6, transparent 60%), radial-gradient(1.5px 1.5px at 30% 65%, #fff7, transparent 60%),
+      radial-gradient(1.5px 1.5px at 55% 28%, #fff8, transparent 60%), radial-gradient(2px 2px at 92% 75%, #fff5, transparent 60%),
+      radial-gradient(ellipse at 50% 120%, #3a2a6b 0%, transparent 60%),
+      linear-gradient(180deg, #0d1030 0%, #1a1240 55%, #241650 100%); }
+  .badges { position:absolute; top:12px; left:12px; display:flex; gap:8px; flex-wrap:wrap; max-width:60%; }
+  .badge { background:#000a; backdrop-filter:blur(4px); border-radius:8px; padding:4px 10px; font-size:12px; }
+  .badge.live { background:var(--live); font-weight:800; }
+  .badge.topic { background:#1f3f55e6; color:#cfeeff; }
+  .badge.topic.asking { background:#2b5f80f0; }
+  .avatar { position:absolute; left:50%; top:44%; transform:translate(-50%,-50%); width:min(26%,180px); aspect-ratio:1; border-radius:50%;
+    background: radial-gradient(circle at 35% 35%, #fff6c8, var(--accent2) 55%, #d98a1e); box-shadow:0 0 60px #ffcf5a55;
+    display:flex; align-items:center; justify-content:center; font-size:clamp(34px,7vw,78px); transition: transform .2s; }
+  .avatar.talk { animation: glow .9s ease-in-out infinite; }
+  @keyframes glow { 50% { box-shadow:0 0 90px #ffcf5acc; transform:translate(-50%,-50%) scale(1.04);} }
+  .subtitle { position:absolute; left:50%; bottom:6%; transform:translateX(-50%); width:min(92%,820px); text-align:center; }
+  .subtitle .who { display:inline-block; font-size:12px; color:#ddd; background:#0008; border-radius:6px; padding:2px 8px; margin-bottom:6px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .subtitle .who.don { background:#7a4a10cc; color:#ffe1b8; }
+  .subtitle .txt { background:#000b; border-radius:10px; padding:10px 16px; font-size:clamp(15px,2.1vw,22px); font-weight:700; line-height:1.45; overflow-wrap:anywhere; }
+  .subtitle .bar { height:3px; background:#ffffff22; border-radius:3px; overflow:hidden; margin-top:6px; }
+  .subtitle .bar i { display:block; height:100%; width:0; background:var(--accent2); }
+  /* 후원 알림 */
+  .alert { position:absolute; top:10%; left:50%; transform:translate(-50%, -20px); opacity:0; pointer-events:none;
+    width:min(70%,460px); text-align:center; background:linear-gradient(135deg,#3a2210f2,#5a2f12f2); border:1px solid #ffb36b88;
+    border-radius:14px; padding:12px 16px; box-shadow:0 10px 40px #000a; transition: all .35s; }
+  .alert.show { opacity:1; transform:translate(-50%,0); }
+  .alert .amt { font-size:clamp(18px,2.6vw,28px); font-weight:900; color:var(--gift); }
+  .alert .nick { font-weight:700; }
+  .alert .msg { margin-top:4px; font-size:14px; color:#ffe9d6; overflow-wrap:anywhere; }
+  /* 하트 알림 */
+  .hearts { position:absolute; right:12px; bottom:28%; display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+  .heart { background:#3a2030e6; color:#ffc2d0; border-radius:999px; padding:4px 10px; font-size:12px; animation: up 4s forwards; }
+  .heart.me { outline:2px solid var(--me); }
+  @keyframes up { 0% { opacity:0; transform:translateY(10px);} 10%,80% { opacity:1; transform:none;} 100% { opacity:0; transform:translateY(-14px);} }
+
+  /* ---------- 방송 정보 ---------- */
+  .info { display:flex; gap:12px; align-items:flex-start; margin:14px 0 10px; }
+  .info .ch { width:44px; height:44px; flex:none; border-radius:50%; background:radial-gradient(circle at 35% 35%, #fff4c4, var(--accent2) 60%, #c47a12); }
+  .info h1 { font-size:18px; margin:0 0 4px; }
+  .tags { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+  .tag { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--panel2); color:var(--muted); border:1px solid var(--line); }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-top:8px; }
+  .tabs button { background:none; border:none; border-bottom:2px solid transparent; padding:8px 10px; color:var(--muted); }
+  .tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+  .tabpane { padding:14px 2px; display:none; }
+  .tabpane.on { display:block; }
+  .stats { display:grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap:10px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+  .stat .v { font-size:20px; font-weight:800; font-variant-numeric: tabular-nums; }
   .stat .l { font-size:12px; color:var(--muted); }
-  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
-  .muted { color:var(--muted); font-size:12px; line-height:1.6; }
-  .llmbox { font-size:13px; line-height:1.7; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .controls select { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+  .btn { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:7px 12px; }
+  .btn.primary { background:var(--accent); color:#160d33; border:none; font-weight:800; }
+  #history div { font-size:13px; padding:6px 0; border-bottom:1px dashed var(--line); color:var(--muted); overflow-wrap:anywhere; }
+  #history b { color:var(--text); font-weight:600; }
+  .llmbox { font-size:13px; line-height:1.8; }
+
+  /* ---------- 채팅 ---------- */
+  .side h2 { font-size:14px; margin:0; padding:12px 14px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  .queue { padding:8px 14px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); display:flex; gap:6px; flex-wrap:wrap; align-items:center; min-height:36px; }
+  .queue .q { background:#3a2512; color:#ffd2a6; border-radius:999px; padding:2px 8px; }
+  #chat { flex:1; overflow-y:auto; padding:8px 14px; font-size:14px; line-height:1.55; min-height:0; }
+  #chat div { padding:2px 0; overflow-wrap:anywhere; }
+  #chat .nick { color:var(--muted); margin-right:6px; font-weight:600; }
+  #chat .me .nick { color:var(--me); }
+  #chat .don { background:#3a2512; border:1px solid #6b4520; border-radius:8px; padding:6px 8px; margin:4px 0; }
+  #chat .don .amt { color:var(--gift); font-weight:800; margin-right:6px; }
+  .compose { border-top:1px solid var(--line); padding:10px; display:flex; flex-direction:column; gap:8px; }
+  .row { display:flex; gap:6px; }
+  .compose input { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px 10px; min-width:0; }
+  #nick { width:84px; flex:none; }
+  #text { flex:1; }
+  .donate { display:none; gap:6px; flex-wrap:wrap; align-items:center; background:#2a1c10; border:1px solid #6b4520; border-radius:10px; padding:8px; }
+  .donate.on { display:flex; }
+  .donate .amt { background:#3a2512; border:1px solid #6b4520; color:#ffd2a6; border-radius:999px; padding:4px 10px; }
+  .donate .amt.on { background:var(--gift); color:#2a1404; font-weight:800; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1><span class="live">LIVE</span>솔라의 별빛 라디오 <button class="ghost" id="sound">🔈 소리 켜기</button> <span class="muted" id="conn">연결 중…</span></h1>
-  <div class="layout">
-    <div class="side">
-      <div class="card">
-        <h2>솔라 (지구에 막 떨어진 꼬마 별) · 입은 하나라서 한 번에 한 명</h2>
-        <div class="stage">
-          <div class="avatar" id="avatar">⭐</div>
-          <div class="say" id="say">
-            <div class="to" id="to">곧 첫 대사가 나와요…</div>
-            <div class="line" id="line"></div>
-            <div class="bar"><i id="bar"></i></div>
-          </div>
-        </div>
-        <div class="topic" id="topic">지금 이야기: 자유롭게 채팅 읽는 중</div>
-        <div class="acks" id="acks"></div>
-        <div class="muted">❤ = 목소리 대신 화면에 이름을 띄워 "봤어요"를 알리는 팬</div>
+<header class="topbar">
+  <div class="brand"><span class="dot"></span>솔라 라이브</div>
+  <span class="muted" id="conn">연결 중…</span>
+  <span class="sp"></span>
+  <button class="pill" id="sound">🔈 소리 켜기</button>
+</header>
+
+<div class="page">
+  <main class="main">
+    <section class="player" id="player">
+      <div class="badges">
+        <span class="badge live">LIVE</span>
+        <span class="badge" id="viewers">시청자 -</span>
+        <span class="badge topic" id="topic" hidden></span>
       </div>
-      <div class="card">
-        <h2>채팅 <span id="rate" class="muted"></span></h2>
-        <div id="chat"></div>
-        <form id="form">
-          <input id="nick" placeholder="닉네임" maxlength="12">
-          <input id="text" placeholder="솔라에게 말 걸기 (예: 오늘 라면 먹었어)" maxlength="80" autocomplete="off">
-          <button>보내기</button>
-        </form>
+      <div class="avatar" id="avatar">⭐</div>
+      <div class="alert" id="alert">
+        <div><span class="nick" id="alertNick"></span>님 <span class="amt" id="alertAmt"></span></div>
+        <div class="msg" id="alertMsg"></div>
       </div>
-    </div>
-    <div class="side">
-      <div class="card">
-        <h2>설정 (바꾸면 숫자를 처음부터 다시 셉니다)</h2>
-        <div class="controls">
-          <label>규칙 <select id="rule"></select></label>
-          <label>봇 <select id="bots">
-            <option value="0">0명</option><option value="100">100명</option>
-            <option value="300">300명</option><option value="1000">1000명</option>
-          </select></label>
-          <button class="ghost" id="nextLive">라이브 끝내고 다음 라이브 ▶</button>
-        </div>
-        <div class="muted" id="cfg"></div>
+      <div class="hearts" id="hearts"></div>
+      <div class="subtitle">
+        <span class="who" id="who">솔라</span>
+        <div class="txt" id="line">곧 방송이 시작돼요…</div>
+        <div class="bar"><i id="bar"></i></div>
       </div>
-      <div class="card">
-        <h2>숫자</h2>
-        <div class="stats">
-          <div class="stat"><div class="v" id="voiceRatio">-</div><div class="l">목소리로 이름 불린 팬 / 채팅한 팬</div></div>
-          <div class="stat"><div class="v" id="anyRatio">-</div><div class="l">목소리·화면·묶음 중 하나라도 인정 받은 팬</div></div>
-          <div class="stat"><div class="v" id="start50">-</div><div class="l">채팅 → 목소리 시작 p50</div></div>
-          <div class="stat"><div class="v" id="start95">-</div><div class="l">채팅 → 목소리 시작 p95</div></div>
-          <div class="stat"><div class="v" id="tpm">-</div><div class="l">1분에 말한 차례 (묶음 포함)</div></div>
-          <div class="stat"><div class="v" id="pool">-</div><div class="l">답 기다리는 채팅 (최근 30초, 1인 1줄)</div></div>
-        </div>
-        <div class="muted" style="margin-top:10px" id="returns">다음 라이브로 넘어가면 지난 라이브 팬이 다시 왔는지(복귀율)를 보여 줘요.</div>
-        <div class="muted" style="margin-top:10px" id="meta"></div>
-      </div>
-      <div class="card">
-        <h2>대사 말투 (Claude Haiku) · 누구에게 무엇을 말할지는 코드가 정하고, Haiku는 말투만</h2>
-        <div class="llmbox" id="llm">-</div>
-      </div>
-      <div class="card">
-        <h2>지난 대사</h2>
-        <div id="history"></div>
+    </section>
+
+    <div class="info">
+      <div class="ch"></div>
+      <div>
+        <h1>솔라의 별빛 라디오 — 지구에 막 떨어진 꼬마 별과 수다</h1>
+        <div class="muted" id="meta">-</div>
+        <div class="tags"><span class="tag">AI 캐릭터</span><span class="tag">저챗</span><span class="tag">데모 (봇 시청자)</span></div>
       </div>
     </div>
-  </div>
+
+    <nav class="tabs" id="tabs">
+      <button class="on" data-pane="paneStats">방송 지표</button>
+      <button data-pane="paneDon">후원</button>
+      <button data-pane="paneLlm">AI 대사</button>
+      <button data-pane="paneHist">지난 대사</button>
+      <button data-pane="paneStudio">스튜디오 설정</button>
+    </nav>
+    <section class="tabpane on" id="paneStats">
+      <div class="stats">
+        <div class="stat"><div class="v" id="voiceRatio">-</div><div class="l">목소리로 이름 불린 팬 / 채팅한 팬</div></div>
+        <div class="stat"><div class="v" id="anyRatio">-</div><div class="l">목소리·화면·묶음 중 하나라도 인정</div></div>
+        <div class="stat"><div class="v" id="start50">-</div><div class="l">채팅 → 목소리 시작 p50</div></div>
+        <div class="stat"><div class="v" id="start95">-</div><div class="l">채팅 → 목소리 시작 p95</div></div>
+        <div class="stat"><div class="v" id="tpm">-</div><div class="l">1분에 말한 차례</div></div>
+        <div class="stat"><div class="v" id="pool">-</div><div class="l">답 기다리는 채팅 (최근 30초)</div></div>
+      </div>
+      <div class="muted" style="margin-top:10px" id="returns">다음 라이브로 넘어가면 지난 라이브 팬이 다시 왔는지(복귀율)를 보여 줘요.</div>
+    </section>
+    <section class="tabpane" id="paneDon">
+      <div class="stats">
+        <div class="stat"><div class="v" id="dQueued">0</div><div class="l">대기 중</div></div>
+        <div class="stat"><div class="v" id="dRead">0</div><div class="l">하나씩 읽은 후원</div></div>
+        <div class="stat"><div class="v" id="dBatch">0</div><div class="l">묶어서 감사한 후원 (메시지 건너뜀)</div></div>
+        <div class="stat"><div class="v" id="dWait">-</div><div class="l">후원 → 읽기까지 p50 / 최대</div></div>
+      </div>
+      <p class="muted">후원은 들어온 순서대로 하나씩 읽어요 (메시지는 시스템 목소리, 감사는 솔라). 질문하고 답을 모으는 중이면 진행을 끊지 않게 보류했다가 끝나면 읽고, 6개 이상 쌓이거나 60초 넘게 기다리면 메시지는 건너뛰고 한 줄로 묶어서 감사해요. 일반 채팅 차례와 번갈아 읽어요.</p>
+    </section>
+    <section class="tabpane" id="paneLlm"><div class="llmbox" id="llm">-</div></section>
+    <section class="tabpane" id="paneHist"><div id="history"></div></section>
+    <section class="tabpane" id="paneStudio">
+      <div class="controls">
+        <label>반응 규칙 <select id="rule"></select></label>
+        <label>봇 시청자 <select id="bots">
+          <option value="0">0명</option><option value="100">100명</option>
+          <option value="300">300명</option><option value="1000">1000명</option>
+        </select></label>
+        <button class="btn" id="nextLive">라이브 끝내고 다음 라이브 ▶</button>
+      </div>
+      <p class="muted" id="cfg"></p>
+      <p class="muted">규칙이나 봇 수를 바꾸면 숫자를 처음부터 다시 셉니다. 다음 라이브로 넘어가면 숫자는 새로 세고 팬 기억은 남아요.</p>
+    </section>
+  </main>
+
+  <aside class="side">
+    <h2>채팅 <span class="muted" id="rate"></span></h2>
+    <div class="queue" id="queue"><span>후원 대기 0</span></div>
+    <div id="chat"></div>
+    <form class="compose" id="form">
+      <div class="donate" id="donate">
+        <button type="button" class="amt on" data-amt="1000">1,000원</button>
+        <button type="button" class="amt" data-amt="5000">5,000원</button>
+        <button type="button" class="amt" data-amt="10000">10,000원</button>
+        <span class="muted">데모라 실제 결제는 없어요</span>
+      </div>
+      <div class="row">
+        <input id="nick" placeholder="닉네임" maxlength="12">
+        <input id="text" placeholder="채팅 보내기 (예: 오늘 라면 먹었어)" maxlength="80" autocomplete="off">
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="donateToggle">🎁 후원</button>
+        <span style="flex:1"></span>
+        <button class="btn primary" id="sendBtn">보내기</button>
+      </div>
+    </form>
+  </aside>
 </div>
+
 <script>
 const $ = id => document.getElementById(id);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const won = n => `${Number(n).toLocaleString()}원`;
+
 // 이 탭의 시청자 id. 새로고침해도 같은 사람으로 남게 sessionStorage에 둔다
 function makeId() { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, "0")).join(""); }
 let me = null, nickSaved = "";
@@ -142,28 +235,42 @@ if (!me) { me = makeId(); try { sessionStorage.setItem("viewerId", me); } catch 
 $("nick").value = nickSaved;
 const myNick = () => $("nick").value.trim() || "나";
 
+// 탭
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".tabpane").forEach(p => p.classList.toggle("on", p.id === b.dataset.pane));
+});
+
 // 감정 값 → 표정. 실제 서비스라면 이 값이 Live2D 표정·음성 톤으로 넘어간다
 const FACE = { HAPPY: "😊", EXCITED: "🤩", TOUCHED: "🥹", THINKING: "🤔", CALM: "😌" };
 
-// 브라우저 내장 음성(무료). 소리는 사용자가 버튼을 누른 뒤에만 낼 수 있다 (브라우저 규칙)
-let soundOn = false, koVoice = null;
-function pickVoice() { const vs = speechSynthesis.getVoices(); koVoice = vs.find(v => v.lang && v.lang.startsWith("ko")) || null; }
-if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+// ---------- 음성 (브라우저 내장, 무료). 소리는 사용자가 버튼을 누른 뒤에만 낼 수 있다 ----------
+let soundOn = false, koVoices = [];
+function pickVoices() { koVoices = speechSynthesis.getVoices().filter(v => v.lang && v.lang.startsWith("ko")); }
+if ("speechSynthesis" in window) { pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
 $("sound").onclick = () => {
   if (!("speechSynthesis" in window)) { $("sound").textContent = "이 브라우저는 음성 없음"; return; }
   soundOn = !soundOn;
   $("sound").textContent = soundOn ? "🔊 소리 끄기" : "🔈 소리 켜기";
+  $("sound").classList.toggle("on", soundOn);
   if (!soundOn) speechSynthesis.cancel();
 };
-function speak(text) {
+// parts = [{text, role}] — role "system"(후원 알림 목소리) / "solar"(캐릭터). 라이브라 밀리면 앞 대사는 끊는다
+function speak(parts) {
   if (!soundOn) return;
-  // 라이브라 밀리면 안 된다: 앞 대사가 남아 있으면 끊고 지금 대사를 말한다
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "ko-KR"; if (koVoice) u.voice = koVoice;
-  speechSynthesis.speak(u);
+  for (const p of parts) {
+    const u = new SpeechSynthesisUtterance(p.text);
+    u.lang = "ko-KR";
+    const v = p.role === "system" ? (koVoices[1] || koVoices[0]) : koVoices[0];
+    if (v) u.voice = v;
+    u.pitch = p.role === "system" ? 0.85 : 1.35;
+    u.rate = 1.05;
+    speechSynthesis.speak(u);
+  }
 }
 
+// ---------- 연결 ----------
 const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
 client.onConnect = () => {
   $("conn").textContent = "";
@@ -171,6 +278,8 @@ client.onConnect = () => {
   client.subscribe("/topic/state", m => renderState(JSON.parse(m.body)));
   client.subscribe("/topic/chat", m => renderChat(JSON.parse(m.body)));
   client.subscribe("/topic/speak", m => renderSpeak(JSON.parse(m.body)));
+  client.subscribe("/topic/donation-speak", m => renderDonationSpeak(JSON.parse(m.body)));
+  client.subscribe("/topic/donations", m => renderDonationBoard(JSON.parse(m.body)));
 };
 client.onWebSocketClose = () => { $("conn").textContent = "연결 끊김 · 다시 연결 중…"; };
 client.activate();
@@ -180,28 +289,42 @@ $("rule").onchange = () => control({ rule: $("rule").value });
 $("bots").onchange = () => control({ bots: Number($("bots").value) });
 $("nextLive").onclick = () => control({ nextLive: true });
 
+// ---------- 채팅·후원 보내기 ----------
+let donateOn = false, donateAmt = 1000;
+$("donateToggle").onclick = () => {
+  donateOn = !donateOn;
+  $("donate").classList.toggle("on", donateOn);
+  $("donateToggle").classList.toggle("primary", donateOn);
+  $("text").placeholder = donateOn ? "후원 메시지 (솔라가 읽어 줘요)" : "채팅 보내기 (예: 오늘 라면 먹었어)";
+  $("sendBtn").textContent = donateOn ? "후원하기" : "보내기";
+};
+document.querySelectorAll("#donate .amt").forEach(b => b.onclick = () => {
+  donateAmt = Number(b.dataset.amt);
+  document.querySelectorAll("#donate .amt").forEach(x => x.classList.toggle("on", x === b));
+});
 $("form").onsubmit = e => {
   e.preventDefault();
-  const text = $("text").value.trim(); if (!text || !client.connected) return;
+  if (!client.connected) return;
+  const text = $("text").value.trim();
   try { sessionStorage.setItem("nick", myNick()); } catch (err) {}
-  client.publish({ destination: "/app/chat", body: JSON.stringify({ viewerId: me, nickname: myNick(), text }) });
+  if (donateOn) {
+    client.publish({ destination: "/app/donate", body: JSON.stringify({ viewerId: me, nickname: myNick(), amount: donateAmt, text }) });
+    $("donateToggle").click();
+  } else {
+    if (!text) return;
+    client.publish({ destination: "/app/chat", body: JSON.stringify({ viewerId: me, nickname: myNick(), text }) });
+  }
   $("text").value = "";
 };
 
+// ---------- 화면 그리기 ----------
 function renderState(s) {
   const sel = $("rule");
   if (!sel.options.length) s.rules.forEach(r => sel.append(new Option(r.label, r.id)));
   sel.value = s.rule; $("bots").value = String(s.bots);
-  $("cfg").textContent = `한 차례에 목소리로 1명 + 화면 ❤ ${s.screenK}명. ${s.groupEvery}차례마다 한 번은 같은 이야기를 한 3명 이상을 한 줄로 알아봐요. 대사는 짧게(35자 안팎), 읽는 시간만큼 기다렸다 다음 차례.`;
+  $("viewers").textContent = `시청자 ${s.bots.toLocaleString()}`;
+  $("cfg").textContent = `한 차례에 목소리로 1명 + 화면 ❤ ${s.screenK}명. ${s.groupEvery}차례마다 한 번은 같은 이야기를 한 3명 이상을 한 줄로 알아봐요. 떡밥이 보이면 질문 → 답 모으기 → 정리 → 이어 말하기.`;
   renderStats(s.stats, s.voice); renderLlm(s.llm); renderReturns(s.returns, s.stats);
-}
-
-function renderReturns(r, s) {
-  if (!r) return;
-  const pct = x => `${(x * 100).toFixed(0)}%`;
-  $("returns").textContent = `라이브 ${r.prevLiveNo} → ${s.liveNo} 복귀율: 지난번 인정 받은 팬 ${pct(r.ackedRate ?? (r.prevAcked ? r.returnedAcked / r.prevAcked : 0))} (${r.returnedAcked}/${r.prevAcked}), `
-    + `못 받은 팬 ${r.prevNotAcked ? pct(r.returnedNotAcked / r.prevNotAcked) : "-"} (${r.returnedNotAcked}/${r.prevNotAcked}), 목소리로 불린 팬 ${r.prevVoice ? pct(r.returnedVoice / r.prevVoice) : "-"}. `
-    + `※ 데모 봇은 모두 다시 와서 이 숫자는 화면 확인용이에요 (복귀 효과는 시뮬레이션에서 가정값으로 따로 봄).`;
 }
 
 let chatCount = 0, chatWindowStart = Date.now();
@@ -209,9 +332,9 @@ function renderChat(list) {
   const box = $("chat");
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
   for (const c of list) {
-    const row = el("div", c.human ? "me" : "");
+    const row = el("div", (c.human ? "me " : "") + (c.gift > 0 ? "don" : ""));
+    if (c.gift > 0) row.append(el("span", "amt", `🎁 ${won(c.gift)}`));
     row.append(el("span", "nick", c.nickname));
-    if (c.gift > 0) row.append(el("span", "gift", `🎁 ${c.gift.toLocaleString()}원 `));
     row.append(document.createTextNode(c.text)); // textContent로만 넣는다 (채팅 속 태그가 실행되지 않게)
     box.append(row);
   }
@@ -219,103 +342,124 @@ function renderChat(list) {
   if (atBottom) box.scrollTop = box.scrollHeight;
   chatCount += list.length;
   const sec = (Date.now() - chatWindowStart) / 1000;
-  if (sec > 5) { $("rate").textContent = `· 초당 약 ${(chatCount / sec).toFixed(1)}줄`; chatCount = 0; chatWindowStart = Date.now(); }
+  if (sec > 5) { $("rate").textContent = `초당 약 ${(chatCount / sec).toFixed(1)}줄`; chatCount = 0; chatWindowStart = Date.now(); }
 }
 
-function showLine(toNodes, line, face, isMe, speakMs) {
-  const to = $("to"); to.replaceChildren(...toNodes);
-  $("say").classList.toggle("me", !!isMe);
-  $("line").textContent = `${face} ${line}`;
+// 자막 + 아바타 + 진행 막대 (= 이 대사를 읽는 시간)
+function showLine(who, line, face, speakMs, isDonation) {
+  $("who").textContent = who;
+  $("who").classList.toggle("don", !!isDonation);
+  $("line").textContent = line;
   const a = $("avatar"); a.textContent = face || "⭐"; a.classList.add("talk");
   clearTimeout(showLine.t); showLine.t = setTimeout(() => a.classList.remove("talk"), speakMs);
-  // 진행 막대 = 이 대사를 읽는 시간
   const bar = $("bar"); bar.style.transition = "none"; bar.style.width = "0";
   void bar.offsetWidth; bar.style.transition = `width ${speakMs}ms linear`; bar.style.width = "100%";
-  speak(line);
 }
-
 function addHistory(nodes) {
   const box = $("history"); const d = el("div"); d.append(...nodes);
-  box.prepend(d); while (box.childElementCount > 8) box.lastElementChild.remove();
+  box.prepend(d); while (box.childElementCount > 12) box.lastElementChild.remove();
+}
+function addHearts(acks) {
+  const box = $("hearts");
+  for (const a of acks) {
+    const h = el("div", "heart" + (a.viewerId.startsWith("me-") ? " me" : ""), `❤ ${a.nickname}님 봤어요`);
+    box.append(h); setTimeout(() => h.remove(), 4000);
+  }
+  while (box.childElementCount > 5) box.firstElementChild.remove();
 }
 
 // 지금 이야기 (진행자 상태). 질문 중이면 남은 시간을 1초마다 줄인다
 let topicEnd = 0, topicState = null;
-function renderTopic(st) {
-  topicState = st; topicEnd = st && st.remainingMs ? Date.now() + st.remainingMs : 0;
-  drawTopic();
-}
+function renderTopic(st) { topicState = st; topicEnd = st && st.remainingMs ? Date.now() + st.remainingMs : 0; drawTopic(); }
 function drawTopic() {
-  const box = $("topic"), st = topicState;
-  if (!st || !st.topic) { box.className = "topic"; box.textContent = "지금 이야기: 자유롭게 채팅 읽는 중"; return; }
+  const b = $("topic"), st = topicState;
+  if (!st || !st.topic) { b.hidden = true; return; }
   const left = Math.max(0, Math.ceil((topicEnd - Date.now()) / 1000));
-  box.className = "topic" + (st.asking ? " asking" : "");
-  box.replaceChildren(document.createTextNode("지금 이야기: "), el("b", null, st.topic),
-    document.createTextNode(st.asking ? ` · 질문하고 답 모으는 중 (${left}초 남음) — 답한 채팅에 먼저 반응해요` : ` · 이 주제 채팅을 먼저 봐요 (${left}초)`));
+  b.hidden = false; b.classList.toggle("asking", !!st.asking);
+  b.textContent = st.asking ? `💬 ${st.topic} · 답 모으는 중 ${left}초` : `💬 지금 이야기: ${st.topic}`;
 }
 setInterval(drawTopic, 1000);
 
 function renderSpeak(t) {
   renderTopic(t.topic);
-  if (t.kind === "talk") {
-    showLine([el("span", "tag ask", "이어 말하기"), document.createTextNode(` ${t.group.label}`)], t.group.line, "😊", t.group.nicknames.includes(myNick()), t.speakMs);
-    $("acks").replaceChildren();
-    addHistory([el("b", null, "[이어 말하기] "), document.createTextNode(t.group.line)]);
-  } else if (t.kind === "ask") {
-    showLine([el("span", "tag ask", `질문 · ${t.group.label}`), document.createTextNode(" 솔라가 채팅방에 물어봐요")], t.group.line, "🤔", false, t.speakMs);
-    $("acks").replaceChildren();
-    addHistory([el("b", null, "[질문] "), document.createTextNode(t.group.line)]);
-  } else if (t.kind === "answers") {
-    showLine([el("span", "tag ask", `답 모아 반응 · ${t.group.count}명 답함`), document.createTextNode(` ${t.group.label}`)], t.group.line, "🤩", false, t.speakMs);
-    $("acks").replaceChildren();
-    addHistory([el("b", null, `[답 ${t.group.count}명] `), document.createTextNode(t.group.line)]);
-  } else if (t.kind === "opening") {
-    showLine([el("span", "tag group", `라이브 ${t.stats.liveNo} 오프닝 · 지난 라이브 요약`)], t.group.line, "🥹", false, t.speakMs);
-    $("acks").replaceChildren();
-    addHistory([el("b", null, `[라이브 ${t.stats.liveNo} 시작] `), document.createTextNode(t.group.line)]);
-  } else if (t.kind === "group") {
-    const g = t.group;
-    const names = g.nicknames.slice(0, 4).join(", ") + (g.nicknames.length > 4 ? ` 외 ${g.nicknames.length - 4}명` : "");
-    showLine([el("span", "tag group", `묶음 인정 · ${g.label} ${g.count}명`), document.createTextNode(` ${names}`)],
-      g.line, "🤩", g.nicknames.includes(myNick()), t.speakMs);
-    $("acks").replaceChildren();
-    addHistory([el("b", null, `[묶음 ${g.count}명] `), document.createTextNode(g.line)]);
-  } else {
+  const kind = t.kind;
+  if (kind === "fan") {
     const r = t.reaction;
-    const to = [el("b", null, r.nickname), document.createTextNode(` · "${r.chatText}"` + (r.gift ? ` 🎁${r.gift.toLocaleString()}` : "") + ` · ${(r.waitMs / 1000).toFixed(1)}초 대기`),
-                el("span", "tag" + (r.source === "llm" ? " llm" : ""), r.source === "llm" ? "Haiku" : "템플릿")];
-    if (r.recall) to.push(el("span", "tag mem", `기억: ${r.recall}`));
-    showLine(to, r.line, FACE[r.emotion] || "", r.human, t.speakMs);
-    const acks = $("acks"); acks.replaceChildren();
-    for (const a of t.screenAcks) {
-      const chip = el("span", "ack", `❤ ${a.nickname}`);
-      chip.title = a.chatText;
-      if (a.viewerId.startsWith("me-")) chip.classList.add("me");
-      acks.append(chip);
-    }
+    const face = FACE[r.emotion] || "😊";
+    showLine(`솔라 → ${r.nickname}님 "${r.chatText}"` + (r.recall ? ` · 기억: ${r.recall}` : "") + (r.source === "llm" ? " · Haiku" : ""), r.line, face, t.speakMs);
+    speak([{ text: r.line, role: "solar" }]);
+    addHearts(t.screenAcks);
     addHistory([el("b", null, r.nickname + " "), document.createTextNode(r.line)]);
+  } else {
+    const g = t.group;
+    const label = { ask: "솔라 · 질문", answers: `솔라 · 답 ${g.count}명 정리`, talk: "솔라 · 이어 말하기", group: `솔라 · 묶음 인정 ${g.count}명`, opening: "솔라 · 오프닝" }[kind] || "솔라";
+    const face = { ask: "🤔", answers: "🤩", talk: "😊", group: "🤩", opening: "🥹" }[kind];
+    showLine(label, g.line, face, t.speakMs);
+    speak([{ text: g.line, role: "solar" }]);
+    addHistory([el("b", null, `[${label.replace("솔라 · ", "")}] `), document.createTextNode(g.line)]);
   }
   renderStats(t.stats, t.voice); renderLlm(t.llm); renderReturns(t.returns, t.stats);
-  $("meta").textContent = `라이브 ${t.stats.liveNo} · ${t.ruleLabel} · 봇 ${t.bots}명 · ${t.turn}번째 차례` + (t.llmMs ? ` · 이번 대사 Haiku ${(t.llmMs / 1000).toFixed(1)}초` : "")
-    + ` · 기억 있는 팬 ${t.stats.rememberedFans}명, 기억 꺼낸 횟수 ${t.stats.recalls}` + (t.stats.blockedChats ? ` · 금칙어로 뺀 채팅 ${t.stats.blockedChats}` : "");
+  $("meta").textContent = `라이브 ${t.stats.liveNo} · ${t.ruleLabel} · ${t.turn}번째 차례 · 기억 있는 팬 ${t.stats.rememberedFans}명`;
+}
+
+function renderDonationSpeak(t) {
+  renderTopic(t.topic);
+  const first = t.items[0];
+  const alert = $("alert");
+  if (t.kind === "READ") {
+    $("alertNick").textContent = first.nickname;
+    $("alertAmt").textContent = won(first.amount);
+    $("alertMsg").textContent = first.message || "";
+    showLine("후원 알림 → 솔라", t.thanks, "🥹", t.speakMs, true);
+    speak([{ text: t.readText, role: "system" }, { text: t.thanks, role: "solar" }]);
+    addHistory([el("b", null, `[후원 ${won(first.amount)}] `), document.createTextNode(`${first.nickname}: ${first.message || ""} → ${t.thanks}`)]);
+  } else {
+    const total = t.items.reduce((s, d) => s + d.amount, 0);
+    $("alertNick").textContent = t.items.length > 1 ? `${first.nickname} 외 ${t.items.length - 1}` : first.nickname;
+    $("alertAmt").textContent = `합계 ${won(total)}`;
+    $("alertMsg").textContent = "후원이 몰려서 메시지는 건너뛰고 한 번에 감사해요";
+    showLine(`솔라 · 후원 ${t.items.length}건 묶어서 감사`, t.thanks, "🥹", t.speakMs, true);
+    speak([{ text: t.thanks, role: "solar" }]);
+    addHistory([el("b", null, `[후원 ${t.items.length}건 묶음] `), document.createTextNode(t.thanks)]);
+  }
+  alert.classList.add("show");
+  clearTimeout(renderDonationSpeak.t); renderDonationSpeak.t = setTimeout(() => alert.classList.remove("show"), Math.max(3000, t.speakMs));
+  renderDonationBoard({ queue: t.queue, stats: t.stats });
+}
+
+function renderDonationBoard(b) {
+  const box = $("queue"); box.replaceChildren(el("span", null, `후원 대기 ${b.queue.length}`));
+  for (const d of b.queue.slice(0, 4)) box.append(el("span", "q", `${d.nickname} ${won(d.amount)}`));
+  if (b.queue.length > 4) box.append(el("span", null, `외 ${b.queue.length - 4}`));
+  const s = b.stats;
+  $("dQueued").textContent = s.queued; $("dRead").textContent = s.read;
+  $("dBatch").textContent = `${s.batchedDonations}건 (${s.batchedTurns}번)`;
+  $("dWait").textContent = s.read + s.batchedDonations ? `${(s.waitP50Ms / 1000).toFixed(0)}초 / ${(s.waitMaxMs / 1000).toFixed(0)}초` : "-";
 }
 
 function renderStats(s, v) {
   const pct = (n, d) => d ? `${(n / d * 100).toFixed(1)}%` : "-";
-  $("voiceRatio").textContent = s.chatters ? `${pct(s.reactedFans, s.chatters)} (${s.reactedFans}/${s.chatters})` : "-";
-  $("anyRatio").textContent = s.chatters ? `${pct(s.anyAckFans, s.chatters)} (${s.anyAckFans})` : "-";
+  $("voiceRatio").textContent = s.chatters ? `${pct(s.reactedFans, s.chatters)}` : "-";
+  $("anyRatio").textContent = s.chatters ? `${pct(s.anyAckFans, s.chatters)}` : "-";
   $("pool").textContent = `${s.lastPool}줄`;
   if (v) {
     $("start50").textContent = v.startP50Ms ? `${(v.startP50Ms / 1000).toFixed(1)}초` : "-";
     $("start95").textContent = v.startP95Ms ? `${(v.startP95Ms / 1000).toFixed(1)}초` : "-";
-    $("tpm").textContent = `${v.turnsPerMin.toFixed(1)}번` + (v.groupTurns ? ` (묶음 ${v.groupTurns})` : "");
+    $("tpm").textContent = `${v.turnsPerMin.toFixed(1)}번`;
   }
+}
+
+function renderReturns(r, s) {
+  if (!r) return;
+  const pct = (a, b) => b ? `${Math.round(a / b * 100)}%` : "-";
+  $("returns").textContent = `라이브 ${r.prevLiveNo} → ${s.liveNo} 복귀율: 지난번 인정 받은 팬 ${pct(r.returnedAcked, r.prevAcked)} (${r.returnedAcked}/${r.prevAcked}), `
+    + `못 받은 팬 ${pct(r.returnedNotAcked, r.prevNotAcked)} (${r.returnedNotAcked}/${r.prevNotAcked}). ※ 데모 봇은 모두 다시 와서 화면 확인용이에요.`;
 }
 
 function renderLlm(l) {
   if (!l) return;
   const box = $("llm");
-  if (!l.enabled) { box.textContent = "꺼짐 (live.llm-enabled=false 또는 키 없음) → 템플릿 대사만 나가요. 비용 0원."; return; }
+  if (!l.enabled) { box.textContent = "Claude Haiku 꺼짐 (live.llm-enabled=false 또는 키 없음) → 템플릿 대사만 나가요. 비용 0원. 누구에게 무엇을 말할지는 코드가 정하고, Haiku는 말투만 맡아요."; return; }
   const cost = l.inputTokens / 1e6 * 0.10 + l.outputTokens / 1e6 * 0.50;
   const rej = Object.entries(l.rejected).map(([k, v]) => `${k} ${v}`).join(", ") || "없음";
   box.replaceChildren(

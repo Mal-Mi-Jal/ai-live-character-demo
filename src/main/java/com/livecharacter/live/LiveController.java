@@ -10,6 +10,9 @@ public class LiveController {
     public record ChatIn(String viewerId, String nickname, String text) {
     }
 
+    public record DonateIn(String viewerId, String nickname, Integer amount, String text) {
+    }
+
     public record ControlIn(String rule, Integer bots, Boolean nextLive) {
     }
 
@@ -22,6 +25,11 @@ public class LiveController {
     @MessageMapping("/chat")
     public void chat(ChatIn in) {
         live.humanChat(in.viewerId(), in.nickname(), in.text());
+    }
+
+    @MessageMapping("/donate")
+    public void donate(DonateIn in) {
+        live.humanDonate(in.viewerId(), in.nickname(), in.amount(), in.text());
     }
 
     @MessageMapping("/control")
