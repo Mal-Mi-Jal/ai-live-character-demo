@@ -85,6 +85,49 @@ public final class LineCheck {
         return sb.isEmpty() ? line : sb.toString();
     }
 
+    /** 이만큼 같은 글자가 이어지면 "같은 표현"으로 본다 (닉네임·띄어쓰기·문장부호 빼고) */
+    public static final int REPEAT_WINDOW = 7;
+    private static final Pattern NICK_TOKEN = Pattern.compile("\\S*님\\S*");
+    private static final Pattern NOISE = Pattern.compile("[\\s.,!?~…]");
+
+    /**
+     * 마지막 문장(= 캐릭터 자신의 말)만, 닉네임·띄어쓰기·문장부호 빼고.
+     * 첫 문장은 팬들의 답이라 같은 답("오늘 최고였음")이 겹치는 건 반복이 아니다.
+     * 처음엔 대사 전체를 10글자로 비교했는데 기준선 20줄에서 16%밖에 안 잡혔다 ("먹을 게 없어서" / "음식이 없어서"처럼 조금씩 달라서)
+     */
+    static String normalize(String line) {
+        String[] parts = line.strip().split("(?<=[.!?…~])\\s+");
+        String last = parts[parts.length - 1];
+        return NOISE.matcher(NICK_TOKEN.matcher(last).replaceAll("")).replaceAll("");
+    }
+
+    /**
+     * 최근 대사와 같은 표현을 되풀이하는가. 실측(2026-11-16, 예시 1개 프롬프트 20번): 대부분이
+     * "솔라 별엔 ~이 없어서 다 궁금함 해요" 틀이었다 → 코드로도 막는다
+     */
+    public static boolean repeats(String line, Collection<String> recent) {
+        String a = normalize(line);
+        for (String r : recent) {
+            String b = normalize(r);
+            // 틀: 마지막 문장의 앞 4글자 + 끝 3글자가 같으면 ("솔라별엔 … 함해요")
+            if (a.length() >= 7 && b.length() >= 7 && a.substring(0, 4).equals(b.substring(0, 4))
+                    && a.substring(a.length() - 3).equals(b.substring(b.length() - 3))) return true;
+            for (int i = 0; i + REPEAT_WINDOW <= a.length(); i++) {
+                if (b.contains(a.substring(i, i + REPEAT_WINDOW))) return true;
+            }
+        }
+        return false;
+    }
+
+    /** 대사 목록에서, 바로 앞 5줄 중 하나와 같은 표현을 쓴 줄의 비율 (반복 정도 지표) */
+    public static double repetitionRate(List<String> lines) {
+        int hit = 0;
+        for (int i = 1; i < lines.size(); i++) {
+            if (repeats(lines.get(i), lines.subList(Math.max(0, i - 5), i))) hit++;
+        }
+        return lines.size() <= 1 ? 0 : (double) hit / (lines.size() - 1);
+    }
+
     static String loreBreak(String line) {
         for (Pattern p : LORE_BREAKS) if (p.matcher(line).find()) return "설정 모순";
         return null;

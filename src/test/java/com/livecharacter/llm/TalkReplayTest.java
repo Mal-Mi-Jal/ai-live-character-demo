@@ -35,7 +35,7 @@ class TalkReplayTest {
             Director.Talk t = new Director.Talk(null, List.of(
                     new Chat(1, "a", c[1], "", 0, 0, false), new Chat(2, "b", c[2], "", 0, 0, false)), "템플릿");
             HaikuLineWriter.TalkResult r = HaikuLineWriter.checkTalk(t,
-                    new HaikuLineWriter.TalkOut(c[3], LineWriter.Emotion.HAPPY), Set.of(c[1], c[2]), 0, 0, 0);
+                    new HaikuLineWriter.TalkOut(c[3], LineWriter.Emotion.HAPPY), Set.of(c[1], c[2]), List.of(), 0, 0, 0);
             total++;
             if ("llm".equals(r.source())) {
                 pass++;

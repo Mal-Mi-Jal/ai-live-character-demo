@@ -53,7 +53,7 @@ class HaikuMergeTest {
                 "템플릿 대사");
         java.util.Set<String> others = java.util.Set.of("라면왕7", "치킨러버", "다른팬3");
         java.util.function.Function<String, HaikuLineWriter.TalkResult> check = line ->
-                HaikuLineWriter.checkTalk(t, new HaikuLineWriter.TalkOut(line, LineWriter.Emotion.HAPPY), others, 900, 10, 5);
+                HaikuLineWriter.checkTalk(t, new HaikuLineWriter.TalkOut(line, LineWriter.Emotion.HAPPY), others, List.of(), 900, 10, 5);
 
         assertThat(check.apply("라면왕7님은 라면, 치킨러버님은 치킨! 솔라 별엔 음식이 없어서 다 궁금해요.").source()).isEqualTo("llm");
         assertThat(check.apply("라면왕7님 라면! 솔라도 라면 먹어 봤는데 맛있었어요.").rejected()).isEqualTo("설정 모순");

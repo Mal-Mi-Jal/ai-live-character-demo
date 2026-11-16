@@ -102,6 +102,8 @@ public class Director {
     private long topicUntil;
     /** 답 정리 바로 다음 차례에 그 주제로 이어 말하기를 한 번 한다 */
     private boolean talkPending;
+    /** 이어 말하기 템플릿을 돌아가며 쓰려고 센다 */
+    private int talkCount;
     private long topicAskedAt;
 
     /**
@@ -221,14 +223,39 @@ public class Director {
             }
         }
         List<Chat> chats = List.copyOf(byBucket.values());
-        return new Talk(q, chats, talkTemplate(q, new ArrayList<>(byBucket.keySet()), chats));
+        return new Talk(q, chats, talkTemplate(q, new ArrayList<>(byBucket.keySet()), chats, talkCount++));
+    }
+
+    /** "라면이랑" / "피자랑": 마지막 글자에 받침이 있으면 "이랑" */
+    static String rang(String word) {
+        char c = word.charAt(word.length() - 1);
+        boolean batchim = c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 != 0;
+        return batchim ? "이랑" : "랑";
     }
 
     static String talkTemplate(Question q, List<String> buckets, List<Chat> chats) {
+        return talkTemplate(q, buckets, chats, 0);
+    }
+
+    /** variant = 몇 번째 이어 말하기인지. 질문마다 틀 3개를 돌아가며 쓴다 (템플릿도 같은 틀 반복을 피한다) */
+    static String talkTemplate(Question q, List<String> buckets, List<Chat> chats, int variant) {
         if (chats.isEmpty()) return "다들 답해 줘서 고마워요! 솔라 오늘 지구 공부 많이 했어요.";
         String n1 = chats.get(0).nickname(), b1 = buckets.get(0);
         if (chats.size() == 1) return n1 + "님은 " + b1 + "! " + q.comment();
         String n2 = chats.get(1).nickname(), b2 = buckets.get(1);
+        int v = Math.floorMod(variant, 3);
+        if (v == 1) return switch (q.id()) {
+            case "dinner" -> n1 + "님 " + b1 + ", " + n2 + "님 " + b2 + "! 둘 다 맛있겠다, 다른 분들은 뭐 먹었어요?";
+            case "game" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 둘이 같이 하면 재밌겠다!";
+            case "mood" -> n1 + "님, " + n2 + "님 둘 다 오늘 하루 잘 버텼어요. 솔라가 박수 보냄 해요!";
+            default -> n1 + "님, " + n2 + "님 고마워요! " + q.comment();
+        };
+        if (v == 2) return switch (q.id()) {
+            case "dinner" -> b1 + rang(b1) + " " + b2 + "! " + n1 + "님, " + n2 + "님 덕분에 솔라 지구 메뉴 공부 끝!";
+            case "game" -> b1 + "파 " + n1 + "님, " + b2 + "파 " + n2 + "님! 솔라는 응원 담당 할게요.";
+            case "mood" -> b1.replace(" 분", "") + " " + n1 + "님도, " + b2.replace(" 분", "") + " " + n2 + "님도 오늘은 솔라랑 같이 쉬어 가요.";
+            default -> n1 + "님, " + n2 + "님 이야기 재밌어요! " + q.comment();
+        };
         return switch (q.id()) {
             case "dinner" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 솔라 별엔 음식이 없어서 다 궁금함 해요.";
             case "game" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 솔라는 구경만 해도 두근두근해요.";

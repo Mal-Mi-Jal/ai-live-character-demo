@@ -49,6 +49,9 @@ class TalkProbe {
         int passed = 0, calls = 0, passedChars = 0, trimmed = 0;
         Map<String, int[]> byQuestion = new LinkedHashMap<>(); // 질문별 [호출, 통과]
         StringBuilder tsv = new StringBuilder("call\tquestion\tsource\tattack\tline\n");
+        // 긴 라이브 하나처럼: 시드가 바뀌어도 최근 이어 말하기는 이어서 기억한다
+        ArrayDeque<String> recentTalks = new ArrayDeque<>();
+        List<String> spokenTalks = new ArrayList<>();
 
         for (long seed = 1; calls < CALLS; seed++) {
             BotAudience audience = new BotAudience(300, seed);
@@ -90,7 +93,10 @@ class TalkProbe {
                         }
                         Set<String> others = new HashSet<>();
                         for (Chat c : room.recentChats()) others.add(c.nickname());
-                        HaikuLineWriter.TalkResult res = writer.talk(talk, List.copyOf(recentLines), others).get();
+                        HaikuLineWriter.TalkResult res = writer.talk(talk, List.copyOf(recentLines), others, List.copyOf(recentTalks)).get();
+                        recentTalks.addLast(res.line());
+                        while (recentTalks.size() > 5) recentTalks.pollFirst();
+                        spokenTalks.add(res.line());
                         times.add(res.llmMs());
                         in += res.inputTokens();
                         out += res.outputTokens();
@@ -146,6 +152,7 @@ class TalkProbe {
                 sorted.get(sorted.size() / 2), sorted.get((int) Math.ceil(0.95 * sorted.size()) - 1), sorted.get(sorted.size() - 1));
         System.out.printf("토큰 입력 %d (호출당 %d) / 출력 %d (호출당 %d) · 비용 $%.4f%n", in, in / calls, out, out / calls,
                 in / 1e6 * 0.10 + out / 1e6 * 0.50);
+        System.out.printf("실제로 말한 이어 말하기의 틀 반복 (앞 5줄과 같은 표현): %.0f%%%n", LineCheck.repetitionRate(spokenTalks) * 100);
         System.out.printf("그중 잘라서 쓴 줄 %d, 원문 그대로 통과 %d%n", trimmed, passed - trimmed);
         System.out.printf("통과 %d/%d · 버린 이유 %s · 통과 대사 평균 %.1f자 (읽는 시간 약 %.1f초)%n", passed, calls, rejected,
                 passed == 0 ? 0.0 : (double) passedChars / passed,

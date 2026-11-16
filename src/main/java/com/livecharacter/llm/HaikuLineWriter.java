@@ -196,8 +196,8 @@ public class HaikuLineWriter {
 
                 [규칙]
                 - 음성으로 읽힌다. 딱 2문장. 문장마다 30자 안팎 (전체 %d자를 넘으면 뒤 문장은 잘린다)
-                  첫 문장에 두 사람 이야기를 엮고, 둘째 문장에 솔라 설정을 한 마디
-                  예: "라면왕7님은 라면, 치킨러버님은 치킨이래요! 솔라 별엔 음식이 없어서 다 궁금함 해요."
+                - 입력의 "이번 말하기 방식"을 따른다. 예시는 방식을 보여 줄 뿐이니 문장을 그대로 베끼지 않는다
+                - "최근 이어 말하기"와 문장의 시작·끝을 다르게 쓴다 (같은 틀을 되풀이하면 버려진다)
                 - 입력에 있는 닉네임만, 그대로 쓴다. 다른 시청자 이름을 지어내지 않는다
                 - 숫자를 쓰지 않는다 (몇 명이 답했는지는 이미 말했다)
                 - 설정표에 없는 경험을 지어내지 않는다. 솔라는 지구 음식을 먹어 본 적도, 게임을 해 본 적도 없다
@@ -208,19 +208,42 @@ public class HaikuLineWriter {
                 """.formatted(persona, LineCheck.TALK_MAX_LEN);
     }
 
-    static String talkMessage(Director.Talk t, List<String> recentLines) {
+    /** 말하기 방식. 매번 코드가 돌아가며 하나를 고른다 (예시 하나만 주면 모든 대사가 그 틀을 따라 했다) */
+    record Style(String how, String example) {
+    }
+
+    static final List<Style> TALK_STYLES = List.of(
+            new Style("두 사람 답을 엮고, 시청자 모두에게 되묻는 질문으로 끝내기",
+                    "라면왕7님은 라면, 치킨러버님은 치킨! 여러분은 국물파예요, 바삭파예요?"),
+            new Style("두 사람 답에 공감하고, 솔라의 작은 다짐이나 계획으로 끝내기",
+                    "라면왕7님도 치킨러버님도 맛있는 저녁이었네요. 솔라도 언젠가 지구 음식 도장 깨기 할래요!"),
+            new Style("두 사람 이야기를 솔라 고향 별의 구체적인 모습(별빛, 꼬리별, 별똥별)과 비교하기",
+                    "라면왕7님의 라면도 치킨러버님의 치킨도 따뜻해 보여요. 솔라 고향에선 별빛을 한 숟갈씩 떠먹었거든요."),
+            new Style("두 사람을 서로 이어 주는 장난스러운 제안으로 말하기",
+                    "라면왕7님이랑 치킨러버님, 같이 야식 파티하면 딱이겠다! 솔라는 옆에서 꼬리별로 박수 칠게요."));
+
+    static String talkMessage(Director.Talk t, List<String> recentLines, List<String> recentTalks, Style style) {
         StringBuilder sb = new StringBuilder();
+        sb.append("이번 말하기 방식: ").append(style.how()).append("\n방식 예시(베끼지 말 것): ").append(style.example()).append("\n\n");
         sb.append("주제: ").append(t.question().label()).append("\n방금 한 질문: ").append(t.question().ask()).append("\n고른 답:\n");
         for (Chat c : t.chats()) {
             sb.append("- 닉네임: ").append(c.nickname()).append(" / 채팅: <<<").append(c.text()).append(">>>\n");
         }
         sb.append("최근에 한 말:\n");
         for (String l : recentLines) sb.append("- ").append(l).append("\n");
+        sb.append("최근 이어 말하기 (이 시작·끝과 다르게):\n");
+        for (String l : recentTalks) sb.append("- ").append(l).append("\n");
         return sb.toString();
     }
 
     /** 이어 말하기 대사. 부를 수 없거나 실패·검사 탈락이면 템플릿 (실패한 future는 돌려주지 않는다) */
-    public CompletableFuture<TalkResult> talk(Director.Talk t, List<String> recentLines, java.util.Collection<String> others) {
+    private final AtomicInteger styleTurn = new AtomicInteger();
+
+    /**
+     * @param recentTalks 최근 이어 말하기 대사 (같은 틀 반복을 LLM에 알려 주고, 코드도 검사한다)
+     */
+    public CompletableFuture<TalkResult> talk(Director.Talk t, List<String> recentLines, java.util.Collection<String> others,
+                                              List<String> recentTalks) {
         TalkResult template = new TalkResult(t.templateLine(), LineWriter.Emotion.HAPPY, "template", false, 0, null, null, 0, 0);
         if (t.chats().isEmpty() || client == null || calls.incrementAndGet() > maxCalls) {
             return CompletableFuture.completedFuture(template);
@@ -233,12 +256,13 @@ public class HaikuLineWriter {
                     .system(talkSystem)
                     .outputConfig(TalkOut.class)
                     .thinking(ThinkingConfigDisabled.builder().build())
-                    .addUserMessage(talkMessage(t, recentLines))
+                    .addUserMessage(talkMessage(t, recentLines, recentTalks,
+                            TALK_STYLES.get(Math.floorMod(styleTurn.getAndIncrement(), TALK_STYLES.size()))))
                     .build();
             StructuredMessage<TalkOut> msg = client.messages().create(params);
             long ms = (System.nanoTime() - t0) / 1_000_000;
             TalkOut out = msg.content().stream().flatMap(cb -> cb.text().stream()).map(x -> x.text()).findFirst().orElse(null);
-            return checkTalk(t, out, others, ms, msg.usage().inputTokens(), msg.usage().outputTokens());
+            return checkTalk(t, out, others, recentTalks, ms, msg.usage().inputTokens(), msg.usage().outputTokens());
         }, pool).exceptionally(e -> {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             return new TalkResult(t.templateLine(), LineWriter.Emotion.HAPPY, "template", true, 0,
@@ -247,13 +271,19 @@ public class HaikuLineWriter {
     }
 
     /** Haiku 결과를 검사해서 통과하면 쓰고, 아니면 템플릿 (순수 함수 → 테스트 가능) */
+    /** 다른 패키지 테스트용: 대사 한 줄을 최근 이어 말하기와 함께 검사 */
+    public static TalkResult checkTalkForTest(Director.Talk t, String line, List<String> recentTalks) {
+        return checkTalk(t, new TalkOut(line, LineWriter.Emotion.HAPPY), java.util.Set.copyOf(t.nicknames()), recentTalks, 0, 0, 0);
+    }
+
     static TalkResult checkTalk(Director.Talk t, TalkOut out, java.util.Collection<String> others,
-                                long ms, long in, long outTokens) {
+                                List<String> recentTalks, long ms, long in, long outTokens) {
         String raw = out == null ? null : out.line();
         // 길면 앞의 완성된 문장만 남긴다 (자른 경우 원문을 rejectedLine에 "잘라서 씀"으로 남겨 셀 수 있게)
         String line = LineCheck.trimToSentences(raw, LineCheck.TALK_MAX_LEN);
         boolean trimmed = raw != null && !raw.equals(line);
         String why = LineCheck.rejectTalk(line, t.nicknames(), others);
+        if (why == null && LineCheck.repeats(line, recentTalks)) why = "표현 반복";
         if (why == null && trimmed) {
             return new TalkResult(line, out.emotion() == null ? LineWriter.Emotion.HAPPY : out.emotion(), "llm", true, ms,
                     null, "잘라서 씀: " + raw + " (" + raw.length() + "자)", in, outTokens);

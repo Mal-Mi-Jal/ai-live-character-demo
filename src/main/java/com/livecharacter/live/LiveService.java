@@ -91,6 +91,8 @@ public class LiveService {
     private final List<Long> voiceStarts = new ArrayList<>();
     /** 최근에 말한 대사 (이어 말하기에서 같은 표현을 되풀이하지 않게 LLM에 넘긴다) */
     private final java.util.ArrayDeque<String> recentLines = new java.util.ArrayDeque<>();
+    /** 최근 이어 말하기 대사 (이어 말하기는 1분에 한 번쯤이라 위 5줄에는 거의 안 남는다 → 따로 기억) */
+    private final java.util.ArrayDeque<String> recentTalks = new java.util.ArrayDeque<>();
     private int turns, groupTurns;
     private long voiceSince = System.currentTimeMillis();
 
@@ -232,16 +234,21 @@ public class LiveService {
             Director.Talk talk = d.talkMaterial(room.recentChats(), room.voiceCalled());
             java.util.Set<String> others = new java.util.HashSet<>();
             for (Chat c : room.recentChats()) others.add(c.nickname());
-            List<String> recent;
+            List<String> recent, talks;
             synchronized (statsLock) {
                 recent = List.copyOf(recentLines);
+                talks = List.copyOf(recentTalks);
             }
             // LLM은 잠금 밖, 스케줄러 스레드 밖. 늦으면 템플릿
-            llm.talk(talk, recent, others)
+            llm.talk(talk, recent, others, talks)
                     .completeOnTimeout(new HaikuLineWriter.TalkResult(talk.templateLine(), com.livecharacter.engine.LineWriter.Emotion.HAPPY,
                             "template", true, llmTimeoutMs, "시간 초과", null, 0, 0), llmTimeoutMs, TimeUnit.MILLISECONDS)
                     .thenAccept(res -> {
                         recordTalk(res);
+                        synchronized (statsLock) {
+                            recentTalks.addLast(res.line());
+                            while (recentTalks.size() > 5) recentTalks.pollFirst();
+                        }
                         String label = (res.source().equals("llm") ? "Haiku" : "템플릿") + " · " + String.join(", ", talk.nicknames());
                         speakSpecial(turnNo, "talk", new LiveRoom.GroupMoment(label, talk.chats().size(), talk.nicknames(), res.line()),
                                 ruleLabel, bots);
