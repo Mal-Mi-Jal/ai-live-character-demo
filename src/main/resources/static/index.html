@@ -47,6 +47,10 @@
   .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
   .muted { color:var(--muted); font-size:12px; }
   .side { display:flex; flex-direction:column; gap:14px; }
+  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:6px; margin-left:4px; background:#332f45; color:var(--muted); }
+  .tag.llm { background:#3b2f6b; color:#cdbfff; }
+  .tag.mem { background:#2f4a3b; color:#b5f0cc; }
+  .llmbox { font-size:13px; line-height:1.7; }
 </style>
 </head>
 <body>
@@ -90,10 +94,14 @@
           <div class="stat"><div class="v" id="fans">-</div><div class="l">반응 받은 팬 수 / 채팅한 팬 수</div></div>
           <div class="stat"><div class="v" id="p50">-</div><div class="l">채팅 → 반응 대기 p50</div></div>
           <div class="stat"><div class="v" id="p95">-</div><div class="l">채팅 → 반응 대기 p95</div></div>
-          <div class="stat"><div class="v" id="batch">-</div><div class="l">이번 틱 채팅 수 / 후보(1인 1줄)</div></div>
+          <div class="stat"><div class="v" id="batch">-</div><div class="l">이번 틱 채팅 / 후보(1인 1줄) / 못 받은 30초 포함</div></div>
           <div class="stat"><div class="v" id="proc">-</div><div class="l">틱 처리 시간 (서버)</div></div>
         </div>
         <div class="muted" style="margin-top:10px" id="meta"></div>
+      </div>
+      <div class="card">
+        <h2>대사 말투 (Claude Haiku) · 누구에게 무엇을 말할지는 코드가 정하고, Haiku는 말투만</h2>
+        <div class="llmbox" id="llm">-</div>
       </div>
     </div>
   </div>
@@ -136,7 +144,7 @@ function renderState(s) {
   if (!sel.options.length) s.rules.forEach(r => sel.append(new Option(r.label, r.id)));
   sel.value = s.rule; $("bots").value = String(s.bots);
   $("cfg").textContent = `${s.tickMs / 1000}초마다 채팅을 묶어서 보고, 한 번에 ${s.k}명에게 반응해요. 한 사람이 여러 번 말해도 후보는 한 줄.`;
-  renderStats(s.stats);
+  renderStats(s.stats); renderLlm(s.llm);
 }
 
 let chatCount = 0, chatWindowStart = Date.now();
@@ -159,6 +167,9 @@ function renderChat(list) {
 }
 
 function renderTick(t) {
+  // LLM 응답 시간이 틱마다 달라서 순서가 뒤집혀 도착할 수 있다 → 지난 틱 결과는 버린다 (리셋하면 1부터)
+  if (t.tickNo !== 1 && t.tickNo <= lastTick) return;
+  lastTick = t.tickNo;
   const box = $("lines");
   if (t.reactions.length) {
     box.replaceChildren();
@@ -166,14 +177,34 @@ function renderTick(t) {
       const d = el("div", "line" + (r.human ? " me" : ""));
       const to = el("div", "to");
       to.append(el("b", null, r.nickname), document.createTextNode(` · "${r.chatText}"` + (r.gift ? ` 🎁${r.gift.toLocaleString()}` : "") + ` · ${(r.waitMs / 1000).toFixed(1)}초 대기`));
-      d.append(to, el("div", null, r.line));
+      to.append(el("span", "tag" + (r.source === "llm" ? " llm" : ""), r.source === "llm" ? "Haiku" : "템플릿"));
+      if (r.recall) to.append(el("span", "tag mem", `기억: ${r.recall}`));
+      d.append(to, el("div", null, `${FACE[r.emotion] || ""} ${r.line}`));
       box.append(d);
     }
-    const a = $("avatar"); a.classList.remove("talk"); void a.offsetWidth; a.classList.add("talk");
+    const a = $("avatar"); a.textContent = FACE[t.reactions[0].emotion] || "⭐";
+    a.classList.remove("talk"); void a.offsetWidth; a.classList.add("talk");
   }
   renderStats(t.stats);
-  $("proc").textContent = `${t.tickProcessMs.toFixed(2)}ms`;
-  $("meta").textContent = `${t.ruleLabel} · 봇 ${t.bots}명 · 틱 ${t.tickNo}번째 · 누적 채팅 ${t.stats.totalChats.toLocaleString()}줄` + (t.stats.blockedChats ? ` · 금칙어로 뺀 채팅 ${t.stats.blockedChats}` : "");
+  $("proc").textContent = `${t.tickProcessMs.toFixed(2)}ms` + (t.llmMs ? ` + LLM ${(t.llmMs / 1000).toFixed(1)}초` : "");
+  renderLlm(t.llm);
+  $("meta").textContent = `${t.ruleLabel} · 봇 ${t.bots}명 · 틱 ${t.tickNo}번째 · 누적 채팅 ${t.stats.totalChats.toLocaleString()}줄 · 기억 있는 팬 ${t.stats.rememberedFans}명, 기억 꺼낸 횟수 ${t.stats.recalls}` + (t.stats.blockedChats ? ` · 금칙어로 뺀 채팅 ${t.stats.blockedChats}` : "");
+}
+
+// 감정 값 → 표정. 실제 서비스라면 이 값이 Live2D 표정·음성 톤으로 넘어간다
+const FACE = { HAPPY: "😊", EXCITED: "🤩", TOUCHED: "🥹", THINKING: "🤔", CALM: "😌" };
+let lastTick = 0;
+
+function renderLlm(l) {
+  if (!l) return;
+  const box = $("llm");
+  if (!l.enabled) { box.textContent = "꺼짐 (live.llm-enabled=false 또는 키 없음) → 템플릿 대사만 나가요. 비용 0원."; return; }
+  const cost = l.inputTokens / 1e6 * 0.10 + l.outputTokens / 1e6 * 0.50;
+  const rej = Object.entries(l.rejected).map(([k, v]) => `${k} ${v}`).join(", ") || "없음";
+  box.replaceChildren(
+    el("div", null, `호출 ${l.callsUsed} / 상한 ${l.maxCalls}번 · 응답 p50 ${(l.llmP50Ms / 1000).toFixed(1)}초, p95 ${(l.llmP95Ms / 1000).toFixed(1)}초`),
+    el("div", null, `Haiku 대사 ${l.llmLines}줄 · 템플릿 ${l.templateLines}줄 · 검사·시간초과로 바꾼 이유: ${rej}`),
+    el("div", null, `토큰 입력 ${l.inputTokens.toLocaleString()} / 출력 ${l.outputTokens.toLocaleString()} · 추정 비용 $${cost.toFixed(4)}`));
 }
 
 function renderStats(s) {
@@ -181,7 +212,7 @@ function renderStats(s) {
   $("fans").textContent = `${s.reactedFans} / ${s.chatters}`;
   $("p50").textContent = s.reactedFans ? `${(s.waitP50Ms / 1000).toFixed(1)}초` : "-";
   $("p95").textContent = s.reactedFans ? `${(s.waitP95Ms / 1000).toFixed(1)}초` : "-";
-  $("batch").textContent = `${s.lastBatchSize} / ${s.lastCandidates}`;
+  $("batch").textContent = `${s.lastBatchSize} / ${s.lastCandidates} / ${s.lastPool}`;
 }
 </script>
 </body>
