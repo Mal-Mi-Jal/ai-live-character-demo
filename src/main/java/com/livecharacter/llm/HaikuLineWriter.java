@@ -132,7 +132,11 @@ public class HaikuLineWriter {
         // 누가 무엇을 말했는지는 코드가 아는 사실이고 템플릿이 이미 짧고 정확하다.
         // 실측(2026-11-16, 20번): Haiku에 맡기면 답 + 기억을 한 줄에 넣다가 48~55자로 길어지거나 기억을 빠뜨렸다
         List<Integer> ask = new ArrayList<>();
-        for (int i = 0; i < reactions.size(); i++) if (reactions.get(i).recall() == null) ask.add(i);
+        for (int i = 0; i < reactions.size(); i++) {
+            LiveRoom.Reaction r = reactions.get(i);
+            // 기억 줄, 그리고 이름 없이 채팅을 되읽는 줄은 템플릿 그대로 (Haiku 검사는 닉네임을 요구한다)
+            if (r.recall() == null && r.line().contains(r.nickname())) ask.add(i);
+        }
         if (ask.isEmpty() || client == null || calls.incrementAndGet() > maxCalls) {
             return CompletableFuture.completedFuture(new Result(reactions, false, 0, List.of(), 0, 0));
         }

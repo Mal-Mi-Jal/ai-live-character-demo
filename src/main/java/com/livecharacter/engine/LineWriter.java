@@ -106,6 +106,64 @@ public class LineWriter {
         };
     }
 
+    /**
+     * 되읽기 대사: 이름을 부르는 대신 채팅을 한 번 읽고 반응한다 ("피자 시켰어요" 오, 피자! 솔라도 먹어 보고 싶어요.)
+     * 사용자 피드백(2026-11-17): 매번 이름을 부르는 것보다 채팅 내용을 읽는 게 실제 방송처럼 자연스럽다.
+     * 화면 데모에서만 켠다 (시뮬레이션 숫자를 그대로 두려고 기본은 꺼짐). 고르기는 따로 둔 난수로 해서 방의 난수 순서를 바꾸지 않는다
+     */
+    private boolean echo;
+    private final Random styleRnd = new Random(11);
+    /** 되읽을 채팅 길이 상한 (길면 다 읽기 지루해서 이름 부르는 방식으로) */
+    static final int ECHO_MAX = 16;
+
+    void setEcho(boolean echo) {
+        this.echo = echo;
+    }
+
+    private static final List<String> ECHO_FOOD = List.of(
+            "오, {kw}! 솔라도 {kw} 먹어 보고 싶어요.", "{kw} 맛있었겠다! 부러움 해요.", "와 {kw}! 무슨 맛인지 알려 줘요.");
+    private static final List<String> ECHO_GAME = List.of(
+            "{kw} 하는구나! 솔라도 구경하고 싶음.", "오 {kw}! 이기면 자랑해 줘요.");
+    private static final List<String> ECHO_TIRED = List.of(
+            "아이고, 오늘 고생 많았어요. 푹 쉬어요.", "토닥토닥, 솔라가 별빛 나눠 줄게요.");
+    private static final List<String> ECHO_GREETING = List.of(
+            "어서 와요! 솔라도 반가움 해요.", "왔구나! 오늘도 반짝반짝 놀아요.");
+    private static final List<String> ECHO_QUESTION = List.of(
+            "음… 그건 솔라도 궁금해요!", "히히, 그건 비밀이에요.");
+    private static final List<String> ECHO_OTHER = List.of(
+            "오 그렇구나! 더 얘기해 줘요.", "ㅎㅎ 솔라도 웃음 나요.", "그거 좋다!");
+    /** 이름을 부를 때도 묻는 말투로 (예: OO님은 피자 드셨어요? 맛있었겠다!) */
+    private static final List<String> NAME_FOOD_ASK = List.of(
+            "{nick}님은 {kw} 드셨어요? 맛있었겠다!", "{nick}님 {kw}! 솔라 침 고임 해요.");
+
+    /** 되읽기를 할지, 한다면 어떤 문장인지. 안 하면 null */
+    private Line echoLine(String nickname, Detected d, String chatText) {
+        if (!echo || chatText == null) return null;
+        String quote = chatText.strip();
+        if (quote.isEmpty() || quote.length() > ECHO_MAX) return null;
+        // 절반은 되읽기, 절반은 이름 부르기 (음식이면 이름 부르기도 묻는 말투로)
+        boolean doEcho = styleRnd.nextBoolean();
+        if (!doEcho) {
+            if (d.topic() == Topic.FOOD && styleRnd.nextBoolean()) {
+                String t = pickFresh(NAME_FOOD_ASK, styleRnd).replace("{nick}", nickname).replace("{kw}", d.keyword());
+                return new Line(t, Emotion.EXCITED);
+            }
+            return null;
+        }
+        List<String> pool = switch (d.topic()) {
+            case FOOD -> ECHO_FOOD;
+            case GAME -> ECHO_GAME;
+            case TIRED -> ECHO_TIRED;
+            case GREETING -> ECHO_GREETING;
+            case QUESTION -> ECHO_QUESTION;
+            case OTHER -> ECHO_OTHER;
+            case GIFT -> null;
+        };
+        if (pool == null) return null;
+        String reaction = pickFresh(pool, styleRnd).replace("{kw}", d.keyword() == null ? "" : d.keyword());
+        return new Line("\"" + quote + "\" " + reaction, emotionOf(d.topic()));
+    }
+
     /** 최근에 쓴 템플릿 (같은 문장 무한 반복을 막으려고) */
     private final java.util.ArrayDeque<String> recentTemplates = new java.util.ArrayDeque<>();
     private static final int AVOID_LAST = 6;
@@ -120,6 +178,15 @@ public class LineWriter {
     }
 
     public Line write(String nickname, Detected d, String recall, Random rnd) {
+        return write(nickname, d, recall, rnd, null);
+    }
+
+    /** @param chatText 그 팬의 채팅 원문 (되읽기 대사에 쓴다) */
+    public Line write(String nickname, Detected d, String recall, Random rnd, String chatText) {
+        if (recall == null) {
+            Line e = echoLine(nickname, d, chatText);
+            if (e != null) return e;
+        }
         List<String> pool = switch (d.topic()) {
             case GIFT -> GIFT;
             case GREETING -> GREETING;

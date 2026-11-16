@@ -59,6 +59,9 @@
   .subtitle .txt { background:#000b; border-radius:10px; padding:10px 16px; font-size:clamp(15px,2.1vw,22px); font-weight:700; line-height:1.45; overflow-wrap:anywhere; }
   .subtitle .bar { height:3px; background:#ffffff22; border-radius:3px; overflow:hidden; margin-top:6px; }
   .subtitle .bar i { display:block; height:100%; width:0; background:var(--accent2); }
+  /* 말을 끝내고 채팅을 읽는 정적 시간 */
+  .subtitle.idle .txt { opacity:.45; transition: opacity .6s; }
+  .subtitle.idle .who { color:#cfc8ff; }
   /* 후원 알림 */
   .alert { position:absolute; top:10%; left:50%; transform:translate(-50%, -20px); opacity:0; pointer-events:none;
     width:min(70%,460px); text-align:center; background:linear-gradient(135deg,#3a2210f2,#5a2f12f2); border:1px solid #ffb36b88;
@@ -139,7 +142,7 @@
         <div class="msg" id="alertMsg"></div>
       </div>
       <div class="hearts" id="hearts"></div>
-      <div class="subtitle">
+      <div class="subtitle" id="subtitle">
         <span class="who" id="who">솔라</span>
         <div class="txt" id="line">곧 방송이 시작돼요…</div>
         <div class="bar"><i id="bar"></i></div>
@@ -347,11 +350,18 @@ function renderChat(list) {
 
 // 자막 + 아바타 + 진행 막대 (= 이 대사를 읽는 시간)
 function showLine(who, line, face, speakMs, isDonation) {
+  $("subtitle").classList.remove("idle");
   $("who").textContent = who;
   $("who").classList.toggle("don", !!isDonation);
   $("line").textContent = line;
   const a = $("avatar"); a.textContent = face || "⭐"; a.classList.add("talk");
-  clearTimeout(showLine.t); showLine.t = setTimeout(() => a.classList.remove("talk"), speakMs);
+  // 다 말하면 다음 차례 전까지 "채팅 읽는 중" (서버가 대사 사이에 1.5~5초 정적을 둔다)
+  clearTimeout(showLine.t); showLine.t = setTimeout(() => {
+    a.classList.remove("talk");
+    $("subtitle").classList.add("idle");
+    $("who").classList.remove("don");
+    $("who").textContent = "💭 솔라가 채팅 읽는 중…";
+  }, speakMs);
   const bar = $("bar"); bar.style.transition = "none"; bar.style.width = "0";
   void bar.offsetWidth; bar.style.transition = `width ${speakMs}ms linear`; bar.style.width = "100%";
 }

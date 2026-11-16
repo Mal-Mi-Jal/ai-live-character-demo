@@ -136,6 +136,16 @@ public class LiveRoom {
         this.rnd = new Random(seed);
     }
 
+    /** 화면 데모용: 이름을 부르는 대신 채팅을 되읽는 대사를 섞는다 (시뮬레이션은 끈 채로) */
+    public void setEchoStyle(boolean echo) {
+        lock.lock();
+        try {
+            writer.setEcho(echo);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** 채팅 하나를 받는다. 금칙어가 있으면 채팅창에는 가려서 보이되 반응 후보·기억에서는 빠진다 */
     public Chat receive(String viewerId, String nickname, String text, int gift, long nowMs, boolean human) {
         SafetyFilter.Result safe = SafetyFilter.check(text);
@@ -256,7 +266,7 @@ public class LiveRoom {
                     line = new LineWriter.Line(RETURNING_LINES.get(rnd.nextInt(RETURNING_LINES.size()))
                             .replace("{nick}", c.nickname()), LineWriter.Emotion.TOUCHED);
                 } else {
-                    line = writer.write(c.nickname(), d, recall, rnd);
+                    line = writer.write(c.nickname(), d, recall, rnd, c.text());
                 }
                 if (recall != null) recalls++;
                 reactions.add(new Reaction(c.viewerId(), c.nickname(), c.text(), c.gift(),

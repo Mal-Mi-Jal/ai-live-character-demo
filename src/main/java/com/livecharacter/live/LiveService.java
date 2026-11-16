@@ -84,6 +84,19 @@ public class LiveService {
     /** 대사와 대사 사이 숨 고르기 */
     private static final long GAP_MS = 400;
 
+    /**
+     * 대사와 대사 사이 정적(채팅을 읽는 시간). 사용자 피드백(2026-11-17): 쉬지 않고 계속 말하니 어색하다.
+     * 종류별로 다르게: 질문 뒤엔 답을 기다리며 길게, 이야기 뒤엔 여운, 짧은 반응 뒤엔 짧게. 길이는 조금씩 흔들어 기계적이지 않게
+     */
+    static long pauseAfter(String kind) {
+        java.util.concurrent.ThreadLocalRandom r = java.util.concurrent.ThreadLocalRandom.current();
+        return switch (kind) {
+            case "ask" -> r.nextLong(3000, 5000);
+            case "talk", "story", "answers", "opening" -> r.nextLong(2000, 4000);
+            default -> r.nextLong(1500, 3500);
+        };
+    }
+
     private final SimpMessagingTemplate template;
     private final HaikuLineWriter llm;
     private final long llmTimeoutMs;
@@ -146,6 +159,7 @@ public class LiveService {
         this.botStepMs = botStepMs;
         this.seed = seed;
         this.room = new LiveRoom(rule, 1, screenK, voiceMaxAgeMs, seed);
+        room.setEchoStyle(true); // 화면 데모: 이름 부르기와 채팅 되읽기를 섞는다
         this.botGiftScale = botGiftScale;
         this.audience = new BotAudience(bots, seed, botGiftScale);
     }
@@ -257,7 +271,7 @@ public class LiveService {
                     s.topCount(), List.of(), opening);
             template.convertAndSend("/topic/speak", new SpeakView(turnNo, "opening", null, g, List.of(),
                     ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
-            scheduleTurn(ms);
+            scheduleTurn(ms + pauseAfter("opening"));
             return;
         }
         Director d = director;
@@ -350,9 +364,10 @@ public class LiveService {
                         voiceStarts.add(x.waitMs() + (System.currentTimeMillis() - now));
                     }
                     record(res);
+                    long pause = pauseAfter("fan");
                     template.convertAndSend("/topic/speak", new SpeakView(turnNo, "fan", x, null, r.screenAcks(),
                             ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
-                    scheduleTurn(ms);
+                    scheduleTurn(ms + pause);
                 });
     }
 
@@ -365,7 +380,7 @@ public class LiveService {
         template.convertAndSend("/topic/donation-speak", new DonationSpeak(turnNo, dp.kind().name(), dp.items(),
                 dp.readText(), dp.thanks(), ms, donations.stats(), donations.snapshot(),
                 director.status(System.currentTimeMillis())));
-        scheduleTurn(ms);
+        scheduleTurn(ms + pauseAfter("donation"));
     }
 
     /** 질문·답 정리·묶음 인정처럼 한 사람에게 하는 말이 아닌 차례 (템플릿, LLM 안 씀) */
@@ -378,7 +393,7 @@ public class LiveService {
         template.convertAndSend("/topic/speak", new SpeakView(turnNo, kind, null, g, List.of(),
                 ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(),
                 director.status(System.currentTimeMillis())));
-        scheduleTurn(ms);
+        scheduleTurn(ms + pauseAfter(kind));
     }
 
     /** statsLock 안에서 부른다 */
