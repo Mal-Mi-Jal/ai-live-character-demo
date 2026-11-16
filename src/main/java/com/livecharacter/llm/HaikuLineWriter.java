@@ -124,15 +124,29 @@ public class HaikuLineWriter {
 
     /** 템플릿 대사를 Haiku 대사로 바꾼다. 부를 수 없으면 템플릿 그대로 돌려준다 (실패한 future는 돌려주지 않는다) */
     public CompletableFuture<Result> rewrite(List<LiveRoom.Reaction> reactions) {
-        if (reactions.isEmpty() || client == null || calls.incrementAndGet() > maxCalls) {
+        // 기억을 꺼내는 줄은 템플릿 그대로 쓴다 ("○○님 또 왔네요! 라면 얘기 기억나요!").
+        // 누가 무엇을 말했는지는 코드가 아는 사실이고 템플릿이 이미 짧고 정확하다.
+        // 실측(2026-11-16, 20번): Haiku에 맡기면 답 + 기억을 한 줄에 넣다가 48~55자로 길어지거나 기억을 빠뜨렸다
+        List<Integer> ask = new ArrayList<>();
+        for (int i = 0; i < reactions.size(); i++) if (reactions.get(i).recall() == null) ask.add(i);
+        if (ask.isEmpty() || client == null || calls.incrementAndGet() > maxCalls) {
             return CompletableFuture.completedFuture(new Result(reactions, false, 0, List.of(), 0, 0));
         }
-        return CompletableFuture.supplyAsync(() -> call(reactions), pool)
+        List<LiveRoom.Reaction> sub = ask.stream().map(reactions::get).toList();
+        return CompletableFuture.supplyAsync(() -> putBack(reactions, ask, call(sub)), pool)
                 .exceptionally(e -> {
                     // CompletionException 안의 진짜 원인(시간 초과, 429 등)을 이름으로 남긴다
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
                     return new Result(reactions, true, 0, List.of("호출 실패: " + cause.getClass().getSimpleName()), 0, 0);
                 });
+    }
+
+    /** Haiku에 보낸 줄들의 결과를 원래 자리에 끼워 넣는다 (기억 줄은 템플릿 그대로) */
+    static Result putBack(List<LiveRoom.Reaction> all, List<Integer> asked, Result sub) {
+        List<LiveRoom.Reaction> merged = new ArrayList<>(all);
+        for (int j = 0; j < asked.size(); j++) merged.set(asked.get(j), sub.reactions().get(j));
+        return new Result(List.copyOf(merged), sub.called(), sub.llmMs(), sub.rejected(),
+                sub.inputTokens(), sub.outputTokens(), sub.rejectedLines());
     }
 
     private Result call(List<LiveRoom.Reaction> reactions) {

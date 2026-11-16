@@ -10,7 +10,7 @@ public class LiveController {
     public record ChatIn(String viewerId, String nickname, String text) {
     }
 
-    public record ControlIn(String rule, Integer bots) {
+    public record ControlIn(String rule, Integer bots, Boolean nextLive) {
     }
 
     private final LiveService live;
@@ -26,7 +26,8 @@ public class LiveController {
 
     @MessageMapping("/control")
     public void control(ControlIn in) {
-        live.control(in.rule(), in.bots());
+        if (Boolean.TRUE.equals(in.nextLive())) live.nextLive();
+        else live.control(in.rule(), in.bots());
     }
 
     /** 처음 접속한 화면이 다음 틱을 기다리지 않고 바로 현재 상태를 받게 한다 */

@@ -38,7 +38,8 @@ public class LiveService {
     }
 
     public record StateView(String rule, String ruleLabel, int bots, int screenK, int groupEvery,
-                            List<RuleView> rules, LiveRoom.Stats stats, LlmView llm, VoiceView voice) {
+                            List<RuleView> rules, LiveRoom.Stats stats, LlmView llm, VoiceView voice,
+                            LiveRoom.ReturnStats returns, LiveRoom.LiveSummary lastLive) {
     }
 
     /** LLM 대사 현황: 켜졌나, 몇 번 불렀나, 얼마나 걸렸나, 검사에 몇 줄 걸렸나 */
@@ -60,7 +61,7 @@ public class LiveService {
      */
     public record SpeakView(int turn, String kind, LiveRoom.Reaction reaction, LiveRoom.GroupMoment group,
                             List<LiveRoom.Ack> screenAcks, long speakMs, long llmMs, LiveRoom.Stats stats,
-                            String ruleLabel, int bots, LlmView llm, VoiceView voice) {
+                            String ruleLabel, int bots, LlmView llm, VoiceView voice, LiveRoom.ReturnStats returns) {
     }
 
     private static final Set<Integer> ALLOWED_BOTS = Set.of(0, 100, 300, 1000);
@@ -92,6 +93,9 @@ public class LiveService {
     private final LiveRoom room;
     private volatile BotAudience audience;
     private volatile PickRule rule = PickRule.FAIR;
+    private volatile LiveRoom.LiveSummary lastLive;
+    /** 다음 라이브 첫 차례에 말할 오프닝 (지난 라이브 요약) */
+    private volatile String pendingOpening;
     private ScheduledExecutorService scheduler;
 
     public LiveService(SimpMessagingTemplate template, HaikuLineWriter llm,
@@ -184,6 +188,21 @@ public class LiveService {
         synchronized (statsLock) {
             turnNo = turns + 1;
         }
+        String opening = pendingOpening;
+        if (opening != null) {
+            pendingOpening = null;
+            long ms = speakMs(opening);
+            synchronized (statsLock) {
+                turns++;
+            }
+            LiveRoom.LiveSummary s = lastLive;
+            LiveRoom.GroupMoment g = new LiveRoom.GroupMoment(s.topLabel() == null ? "지난 라이브" : s.topLabel(),
+                    s.topCount(), List.of(), opening);
+            template.convertAndSend("/topic/speak", new SpeakView(turnNo, "opening", null, g, List.of(),
+                    ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats()));
+            scheduleTurn(ms);
+            return;
+        }
         if (groupEvery > 0 && turnNo % groupEvery == 0) {
             LiveRoom.GroupMoment g = room.groupMoment(now);
             if (g != null) {
@@ -193,7 +212,7 @@ public class LiveService {
                     groupTurns++;
                 }
                 template.convertAndSend("/topic/speak", new SpeakView(turnNo, "group", null, g, List.of(),
-                        ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView()));
+                        ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats()));
                 scheduleTurn(ms);
                 return;
             }
@@ -218,7 +237,7 @@ public class LiveService {
                     }
                     record(res);
                     template.convertAndSend("/topic/speak", new SpeakView(turnNo, "fan", x, null, r.screenAcks(),
-                            ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView()));
+                            ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats()));
                     scheduleTurn(ms);
                 });
     }
@@ -269,6 +288,22 @@ public class LiveService {
         room.receive("me-" + viewerId, nick, text, 0, System.currentTimeMillis(), true);
     }
 
+    /**
+     * 지금 라이브를 끝내고 다음 라이브를 시작한다. 숫자는 새로 세고 팬 기억은 남는다.
+     * 봇은 같은 봇들이 다시 온다 (데모라서 복귀 여부는 시뮬레이션 테스트 ReturnRateTest에서 따로 본다)
+     */
+    public synchronized void nextLive() {
+        lastLive = room.startNextLive();
+        pendingOpening = lastLive.openingLine();
+        synchronized (statsLock) {
+            voiceStarts.clear();
+            turns = 0;
+            groupTurns = 0;
+            voiceSince = System.currentTimeMillis();
+        }
+        template.convertAndSend("/topic/state", state());
+    }
+
     /** 규칙이나 봇 수를 바꾸면 숫자를 처음부터 다시 센다 (LLM 호출 수·비용은 서버를 켠 동안 누적) */
     public synchronized void control(String ruleId, Integer bots) {
         if (ruleId != null) rule = PickRule.byId(ruleId);
@@ -286,6 +321,6 @@ public class LiveService {
     public StateView state() {
         List<RuleView> rules = PickRule.all().stream().map(r -> new RuleView(r.id(), r.label())).toList();
         return new StateView(rule.id(), rule.label(), audience.bots().size(), screenK, groupEvery, rules,
-                room.stats(), llmView(), voiceView());
+                room.stats(), llmView(), voiceView(), room.returnStats(), lastLive);
     }
 }

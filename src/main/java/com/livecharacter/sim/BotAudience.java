@@ -65,8 +65,14 @@ public class BotAudience {
      * dtMs 동안 누가 채팅했는지. 각 봇이 확률 dt/평균간격으로 한 번 말한다 (포아송 과정의 근사).
      */
     public List<Sent> step(long dtMs) {
+        return step(dtMs, b -> true);
+    }
+
+    /** present가 false인 봇은 이번 라이브에 오지 않은 것으로 보고 건너뛴다 (다음 라이브 복귀 시뮬레이션용) */
+    public List<Sent> step(long dtMs, java.util.function.Predicate<Bot> present) {
         List<Sent> out = new ArrayList<>();
         for (Bot b : bots) {
+            if (!present.test(b)) continue;
             if (rnd.nextDouble() < dtMs / b.meanIntervalMs()) {
                 int gift = rnd.nextDouble() < b.giftChance() ? giftAmount(b) : 0;
                 String text = CHATS[rnd.nextInt(CHATS.length)];

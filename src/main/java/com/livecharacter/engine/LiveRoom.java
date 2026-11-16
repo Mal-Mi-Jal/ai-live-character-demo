@@ -54,7 +54,25 @@ public class LiveRoom {
                         double reactedRatio, int anyAckFans, double anyAckRatio,
                         long waitP50Ms, long waitP95Ms, int lastBatchSize,
                         int lastCandidates, int lastPool, long blockedChats, int rememberedFans,
-                        long recalls) {
+                        long recalls, int liveNo) {
+    }
+
+    /**
+     * 끝난 라이브 한 번의 요약 (전부 코드가 센 숫자). openingLine = 다음 라이브 첫 대사.
+     */
+    public record LiveSummary(int liveNo, int chatters, int voiceFans, int anyAckFans,
+                              String topLabel, int topCount, String openingLine) {
+    }
+
+    /**
+     * 다음 라이브 복귀율: 지난 라이브에서 채팅한 팬 중 이번 라이브에도 채팅한 비율을
+     * "지난번에 인정(목소리·화면·묶음) 받은 팬" / "못 받은 팬" / "목소리로 불린 팬"으로 나눠 본다.
+     */
+    public record ReturnStats(int prevLiveNo, int prevAcked, int returnedAcked, int prevNotAcked,
+                              int returnedNotAcked, int prevVoice, int returnedVoice) {
+        public double ackedRate() { return prevAcked == 0 ? 0 : (double) returnedAcked / prevAcked; }
+        public double notAckedRate() { return prevNotAcked == 0 ? 0 : (double) returnedNotAcked / prevNotAcked; }
+        public double voiceRate() { return prevVoice == 0 ? 0 : (double) returnedVoice / prevVoice; }
     }
 
     public record TickResult(int tickNo, List<Reaction> reactions, List<Ack> screenAcks, Stats stats) {
@@ -84,6 +102,16 @@ public class LiveRoom {
     private long blockedChats;
     private long recalls;
     private long groupMoments;
+    // ---- 라이브 회차 ----
+    private int liveNo = 1;
+    /** 이번 라이브에서 주제별로 말한 팬 (요약·오프닝용) */
+    private Map<String, java.util.Set<String>> topicFans = new LinkedHashMap<>();
+    /** 지난 라이브에서 채팅한 / 인정 받은 / 목소리로 불린 팬 */
+    private java.util.Set<String> prevChatters = java.util.Set.of();
+    private java.util.Set<String> prevAcked = java.util.Set.of();
+    private java.util.Set<String> prevVoice = java.util.Set.of();
+    /** 이번 라이브에서 "또 와 줬네요"를 이미 말한 팬 (한 라이브에 한 번만) */
+    private java.util.Set<String> greetedReturning = new java.util.HashSet<>();
     private int tickNo;
     private int lastBatchSize;
     private int lastCandidates;
@@ -121,6 +149,8 @@ public class LiveRoom {
                 ledger.onChat(c);
                 LineWriter.Detected d = LineWriter.detect(c.text(), c.gift());
                 if (d.memorable()) memory.remember(viewerId, d.keyword(), nowMs);
+                String label = groupLabel(d);
+                if (label != null) topicFans.computeIfAbsent(label, x -> new java.util.HashSet<>()).add(viewerId);
             }
             return c;
         } finally {
@@ -191,8 +221,18 @@ public class LiveRoom {
                 ledger.onReacted(c, nowMs);
                 LineWriter.Detected d = LineWriter.detect(c.text(), c.gift());
                 String recall = memory.recall(c.viewerId(), d.keyword(), nowMs);
+                LineWriter.Line line;
+                boolean generic = d.topic() == LineWriter.Topic.GREETING || d.topic() == LineWriter.Topic.OTHER;
+                if (recall == null && generic && prevChatters.contains(c.viewerId()) && greetedReturning.add(c.viewerId())) {
+                    // 지난 라이브에도 왔던 팬 (꺼낼 키워드는 없지만 다시 온 것 자체를 알아본다).
+                    // 인사·잡담일 때만 — 구체적인 말을 했으면 그 말에 답하는 게 먼저다
+                    recall = RETURNING;
+                    line = new LineWriter.Line(RETURNING_LINES.get(rnd.nextInt(RETURNING_LINES.size()))
+                            .replace("{nick}", c.nickname()), LineWriter.Emotion.TOUCHED);
+                } else {
+                    line = writer.write(c.nickname(), d, recall, rnd);
+                }
                 if (recall != null) recalls++;
-                LineWriter.Line line = writer.write(c.nickname(), d, recall, rnd);
                 reactions.add(new Reaction(c.viewerId(), c.nickname(), c.text(), c.gift(),
                         d.topic(), d.keyword(), recall, line.text(), line.emotion(), "template",
                         nowMs - c.receivedAtMs(), c.human()));
@@ -284,24 +324,99 @@ public class LiveRoom {
     }
 
     /** 규칙을 바꾸면 숫자를 처음부터 다시 센다 (규칙끼리 같은 조건에서 비교하려고). 팬 기억은 남는다 */
+    /** 키워드 없이 "지난 라이브에도 왔던 팬"을 알아볼 때 recall 칸에 넣는 값 */
+    public static final String RETURNING = "지난 라이브";
+    private static final List<String> RETURNING_LINES = List.of(
+            "{nick}님 또 와 줬네요! 진짜 반가워요!",
+            "{nick}님 지난 라이브에도 왔죠? 솔라 기억함 해요!",
+            "{nick}님 다시 만났다! 꼬리별 흔들흔들!");
+
+    /**
+     * 지금 라이브를 끝내고 다음 라이브를 시작한다.
+     * 숫자(팬별 기록)는 새로 세고, 팬 기억(FanMemory)은 그대로 남는다 = 관계가 다음 라이브로 이어진다.
+     * @return 끝난 라이브의 요약 (openingLine = 다음 라이브 첫 대사)
+     */
+    public LiveSummary startNextLive() {
+        lock.lock();
+        try {
+            java.util.Set<String> chatters = new java.util.HashSet<>(), acked = new java.util.HashSet<>(), voice = new java.util.HashSet<>();
+            for (FanLedger.Fan f : ledger.all()) {
+                chatters.add(f.viewerId);
+                if (f.reactedCount + f.screenAcked + f.groupAcked > 0) acked.add(f.viewerId);
+                if (f.reactedCount > 0) voice.add(f.viewerId);
+            }
+            String top = null;
+            for (Map.Entry<String, java.util.Set<String>> e : topicFans.entrySet()) {
+                if (top == null || e.getValue().size() > topicFans.get(top).size()) top = e.getKey();
+            }
+            int topCount = top == null ? 0 : topicFans.get(top).size();
+            LiveSummary summary = new LiveSummary(liveNo, chatters.size(), voice.size(), acked.size(),
+                    top, topCount, openingLine(top, topCount));
+
+            prevChatters = java.util.Set.copyOf(chatters);
+            prevAcked = java.util.Set.copyOf(acked);
+            prevVoice = java.util.Set.copyOf(voice);
+            liveNo++;
+            topicFans = new LinkedHashMap<>();
+            greetedReturning = new java.util.HashSet<>();
+            resetCounters();
+            return summary;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    static String openingLine(String top, int count) {
+        if (top == null) return "다시 만나서 반가워요! 솔라 오늘도 반짝!";
+        return switch (top) {
+            case "피곤" -> "지난 라이브엔 지친 분이 " + count + "명이었죠. 오늘은 푹 쉬어 가요!";
+            case "인사" -> "지난번에 인사해 준 " + count + "명! 오늘도 안녕안녕!";
+            default -> "지난 라이브엔 " + top + " 얘기한 분이 " + count + "명이었죠! 오늘도 반가워요!";
+        };
+    }
+
+    /** 지난 라이브 팬 중 이번 라이브에 다시 채팅한 비율 (첫 라이브면 null) */
+    public ReturnStats returnStats() {
+        lock.lock();
+        try {
+            if (liveNo == 1) return null;
+            int ra = 0, rn = 0, rv = 0;
+            for (String id : prevChatters) {
+                if (ledger.get(id) == null) continue;
+                if (prevAcked.contains(id)) ra++;
+                else rn++;
+                if (prevVoice.contains(id)) rv++;
+            }
+            return new ReturnStats(liveNo - 1, prevAcked.size(), ra, prevChatters.size() - prevAcked.size(), rn,
+                    prevVoice.size(), rv);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public void reset(PickRule newRule) {
         lock.lock();
         try {
             rule = newRule;
-            ledger = new FanLedger();
-            pending = new ArrayList<>();
-            unanswered = new LinkedHashMap<>();
-            totalChats = 0;
-            blockedChats = 0;
-            recalls = 0;
-            groupMoments = 0;
-            tickNo = 0;
-            lastBatchSize = 0;
-            lastCandidates = 0;
-            lastPool = 0;
+            resetCounters();
         } finally {
             lock.unlock();
         }
+    }
+
+    /** 잠금 안에서만 부른다 */
+    private void resetCounters() {
+        ledger = new FanLedger();
+        pending = new ArrayList<>();
+        unanswered = new LinkedHashMap<>();
+        totalChats = 0;
+        blockedChats = 0;
+        recalls = 0;
+        groupMoments = 0;
+        tickNo = 0;
+        lastBatchSize = 0;
+        lastCandidates = 0;
+        lastPool = 0;
     }
 
     public Stats stats() {
@@ -331,6 +446,6 @@ public class LiveRoom {
                 chatters == 0 ? 0 : (double) reacted / chatters,
                 any, chatters == 0 ? 0 : (double) any / chatters,
                 ledger.waitPercentile(0.5), ledger.waitPercentile(0.95),
-                lastBatchSize, lastCandidates, lastPool, blockedChats, memory.fans(), recalls);
+                lastBatchSize, lastCandidates, lastPool, blockedChats, memory.fans(), recalls, liveNo);
     }
 }
