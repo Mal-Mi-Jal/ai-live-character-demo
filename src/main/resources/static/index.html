@@ -392,8 +392,8 @@ function renderSpeak(t) {
     addHistory([el("b", null, r.nickname + " "), document.createTextNode(r.line)]);
   } else {
     const g = t.group;
-    const label = { ask: "솔라 · 질문", answers: `솔라 · 답 ${g.count}명 정리`, talk: "솔라 · 이어 말하기", group: `솔라 · 묶음 인정 ${g.count}명`, opening: "솔라 · 오프닝" }[kind] || "솔라";
-    const face = { ask: "🤔", answers: "🤩", talk: "😊", group: "🤩", opening: "🥹" }[kind];
+    const label = { ask: "솔라 · 질문", answers: `솔라 · 답 ${g.count}명 정리`, talk: "솔라 · 이어 말하기", group: `솔라 · 묶음 인정 ${g.count}명`, opening: "솔라 · 오프닝", story: "솔라 · 혼잣말" }[kind] || "솔라";
+    const face = { ask: "🤔", answers: "🤩", talk: "😊", group: "🤩", opening: "🥹", story: "😌" }[kind];
     showLine(label, g.line, face, t.speakMs);
     speak([{ text: g.line, role: "solar" }]);
     addHistory([el("b", null, `[${label.replace("솔라 · ", "")}] `), document.createTextNode(g.line)]);

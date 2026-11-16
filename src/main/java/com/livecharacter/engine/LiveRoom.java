@@ -275,6 +275,19 @@ public class LiveRoom {
      * 문장은 템플릿만 쓴다 — 인원 숫자가 들어가서, LLM에게 맡기면 숫자 검사가 더 필요하다.
      */
     public GroupMoment groupMoment(long nowMs) {
+        return groupMoment(nowMs, 0, false);
+    }
+
+    /** 주제별 마지막 묶음 인정 시각 (같은 주제를 몇 분 안에 또 세지 않게) */
+    private final Map<String, Long> lastGroupAt = new LinkedHashMap<>();
+
+    /**
+     * 화면 데모용 묶음 인정. 처음 버전은 4차례마다 "인사해 준 34명, 다들 반가워요!"처럼 인원만 바뀐 같은 말을
+     * 되풀이해서 정적으로 느껴졌다(사용자 피드백 2026-11-17) →
+     * @param cooldownMs 같은 주제는 이 시간 안에 다시 묶지 않는다
+     * @param skipGreeting 인사 묶음은 하지 않는다 (인사는 오프닝·개별 반응으로 충분)
+     */
+    public GroupMoment groupMoment(long nowMs, long cooldownMs, boolean skipGreeting) {
         lock.lock();
         try {
             // 이번 차례 전까지 쌓인 채팅도 함께 본다
@@ -287,7 +300,10 @@ public class LiveRoom {
             for (Chat c : unanswered.values()) {
                 if (nowMs - c.receivedAtMs() > CARRY_MS) continue;
                 String label = groupLabel(LineWriter.detect(c.text(), c.gift()));
-                if (label != null) byLabel.computeIfAbsent(label, x -> new ArrayList<>()).add(c);
+                if (label == null || (skipGreeting && label.equals("인사"))) continue;
+                Long last = lastGroupAt.get(label);
+                if (last != null && nowMs - last < cooldownMs) continue;
+                byLabel.computeIfAbsent(label, x -> new ArrayList<>()).add(c);
             }
             String best = null;
             for (Map.Entry<String, List<Chat>> e : byLabel.entrySet()) {
@@ -302,7 +318,10 @@ public class LiveRoom {
                 names.add(c.nickname());
             }
             groupMoments++;
-            return new GroupMoment(best, members.size(), List.copyOf(names), groupLine(best, members.size()));
+            lastGroupAt.put(best, nowMs);
+            String line = cooldownMs > 0 ? groupLineVaried(best, members.size(), (int) groupMoments)
+                    : groupLine(best, members.size());
+            return new GroupMoment(best, members.size(), List.copyOf(names), line);
         } finally {
             lock.unlock();
         }
@@ -314,6 +333,24 @@ public class LiveRoom {
             case TIRED -> "피곤";
             case GREETING -> "인사";
             default -> null;
+        };
+    }
+
+    /** 묶음 인정 문장을 돌아가며 (화면 데모용) */
+    static String groupLineVaried(String label, int n, int turn) {
+        int v = Math.floorMod(turn, 3);
+        return switch (label) {
+            case "피곤" -> switch (v) {
+                case 0 -> "오늘 지친 분이 " + n + "명이나! 다 같이 기지개 한 번 켜요.";
+                case 1 -> "피곤하다는 채팅이 많네요. 솔라가 별빛 담요 덮어 줄게요.";
+                default -> "오늘 다들 고생 많았어요. 잠깐 쉬어 가는 시간!";
+            };
+            case "인사" -> "인사해 준 " + n + "명, 다들 반가워요!";
+            default -> switch (v) {
+                case 0 -> label + " 얘기한 " + n + "명, 솔라 다 봤어요!";
+                case 1 -> "지금 채팅창이 " + label + " 얘기로 가득해요. 솔라도 궁금해지잖아요!";
+                default -> label + " 좋아하는 분들 여기 다 모였네요? 솔라도 끼워 줘요!";
+            };
         };
     }
 

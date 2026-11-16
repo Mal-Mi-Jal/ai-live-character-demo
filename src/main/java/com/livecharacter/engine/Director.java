@@ -22,7 +22,7 @@ import java.util.function.Predicate;
  */
 public class Director {
 
-    public enum Kind { REACT, ASK, ANSWERS, TALK, GROUP }
+    public enum Kind { REACT, ASK, ANSWERS, TALK, STORY, GROUP }
 
     /**
      * 진행자가 던지는 질문. buckets = 답 칸 → 그 칸으로 셀 키워드들.
@@ -89,15 +89,64 @@ public class Director {
                     {"피곤한 분", "피곤", "힘들", "졸려", "야근", "지쳤"}}),
             List.of("좋았어요!", "완전 신나요", "피곤해요…", "야근해서 힘들어", "오늘 최고였음", "졸려요"),
             "다들 오늘도 수고 많았어요!");
-    static final List<Question> ROTATION = List.of(DINNER, MOOD, GAME);
+    static final Question WEEKEND = new Question("weekend", "주말 계획",
+            "이번 주말에 뭐 해요? 솔라한테 알려 줘요!",
+            orderedBuckets(new String[][]{
+                    {"집콕", "집", "쉬", "누워", "잠"}, {"여행", "여행", "바다", "놀러"}, {"공부", "공부", "시험", "과제"},
+                    {"약속", "친구", "약속", "데이트"}, {"게임", "게임", "롤"}}),
+            List.of("집에서 쉴래요", "친구 만나요", "바다 놀러 가요", "시험 공부해야 돼요", "게임 할 거예요", "그냥 누워 있을 듯"),
+            "솔라는 주말에 별똥별 산책 함 해요!");
+    static final Question PET = new Question("pet", "같이 사는 동물",
+            "다들 집에 같이 사는 동물 있어요?",
+            orderedBuckets(new String[][]{
+                    {"고양이", "고양이", "냥"}, {"강아지", "강아지", "멍"}, {"햄스터", "햄스터"},
+                    {"물고기", "물고기", "금붕어"}, {"없음", "없어", "없음"}}),
+            List.of("고양이 두 마리요", "강아지 키워요", "햄스터!", "금붕어 있어요", "없어요ㅠ", "냥이 있어요"),
+            "솔라는 꼬리별이 반려동물이에요!");
+    static final Question SEASON = new Question("season", "좋아하는 계절",
+            "다들 무슨 계절 제일 좋아해요?",
+            orderedBuckets(new String[][]{{"봄", "봄"}, {"여름", "여름"}, {"가을", "가을"}, {"겨울", "겨울"}}),
+            List.of("봄이 좋아요", "여름!", "가을이 최고", "겨울 좋아해요", "무조건 여름"),
+            "솔라 별엔 계절이 없어서 다 신기함 해요.");
+    static final Question MUSIC = new Question("music", "요즘 듣는 노래",
+            "요즘 무슨 노래 자주 들어요?",
+            orderedBuckets(new String[][]{
+                    {"발라드", "발라드"}, {"아이돌", "아이돌", "케이팝"}, {"힙합", "힙합"},
+                    {"애니 노래", "애니", "OST"}, {"밴드", "밴드", "록"}}),
+            List.of("발라드요", "아이돌 노래", "힙합 들어요", "애니 OST!", "밴드 음악"),
+            "솔라는 별빛 소리만 들어 봤어요!");
+    static final Question SNACK = new Question("snack", "야식",
+            "지금 야식 땡기는 사람? 뭐 먹고 싶어요?",
+            orderedBuckets(new String[][]{
+                    {"치킨", "치킨"}, {"라면", "라면"}, {"피자", "피자"}, {"떡볶이", "떡볶이"}, {"족발", "족발", "보쌈"}}),
+            List.of("치킨 땡긴다", "라면 끓일까", "피자!", "떡볶이 먹고 싶다", "족발이요"),
+            "솔라도 야식 구경 함 해요!");
+    static final List<Question> ROTATION = List.of(DINNER, MOOD, GAME, WEEKEND, PET, SEASON, MUSIC, SNACK);
+    /** 다 물어본 질문도 이만큼 지나면 다시 물을 수 있다 */
+    public static final long REASK_MS = 240_000;
+    /** 질문할 게 없을 때 이만큼 차례마다 솔라 자기 이야기 한 줄 */
+    public static final int STORY_EVERY = 6;
+
+    /** 솔라 자기 이야기 (설정표 바탕, 템플릿). 채팅만 읽지 않고 캐릭터가 먼저 말을 거는 차례 */
+    static final List<String> STORIES = List.of(
+            "오늘 별똥별 타고 오다가 구름에 살짝 걸렸어요. 꼬리별이 아직 축축함 해요!",
+            "지구 사람들은 별 보면서 소원 빈다면서요? 솔라는 별인데… 누구한테 빌어야 해요?",
+            "아까 처음으로 바람을 만져 봤어요. 차갑고 간지러움 해요!",
+            "솔라 고향 별에선 인사 대신 반짝 두 번 해요. 여러분도 채팅으로 해 볼래요?",
+            "지구 말 공부 중인데 '배고프다'가 제일 어려워요. 솔라는 배가 없거든요!",
+            "채팅 보다가 깨달았어요. 지구엔 고양이 키우는 사람이 진짜 많네요?",
+            "솔라 꿈은 지구 음식 백 가지 구경하기예요. 오늘은 몇 개나 채웠을까요?",
+            "별빛 라디오 오길 잘했다… 여러분 말 들으면 꼬리별이 막 따뜻해져요.");
 
     private Question active;
     private long askedAt;
     private long lastAskAt = -ASK_GAP_MS;
     private int turnsSinceAsk;
     private int rotation;
-    /** 이번 라이브에서 이미 던진 질문 (같은 질문을 또 하지 않게) */
-    private final Set<String> asked = new java.util.HashSet<>();
+    /** 질문 id → 마지막으로 던진 시각 (같은 질문은 REASK_MS 동안 다시 안 한다) */
+    private final Map<String, Long> askedAt2 = new LinkedHashMap<>();
+    private int turnsSinceStory;
+    private int storyTurn;
     private Question topic;
     private long topicUntil;
     /** 답 정리 바로 다음 차례에 그 주제로 이어 말하기를 한 번 한다 */
@@ -124,14 +173,17 @@ public class Director {
         turnsSinceAsk++;
         if (nowMs - lastAskAt >= ASK_GAP_MS) {
             String hotLabel = hottest(hot);
-            if (hotLabel != null && !asked.contains(questionFor(hotLabel).id())) {
-                Question q = questionFor(hotLabel);
-                return new Plan(Kind.ASK, q, null, prefaceFor(hotLabel));
-            }
+            Question hotQ = hotLabel == null ? null : questionFor(hotLabel, nowMs);
+            if (hotQ != null) return new Plan(Kind.ASK, hotQ, null, prefaceFor(hotLabel));
             if (turnsSinceAsk >= ASK_EVERY_TURNS) {
-                Question q = nextUnasked();
+                Question q = nextUnasked(nowMs);
                 if (q != null) return new Plan(Kind.ASK, q, null, null);
             }
+        }
+        // 질문할 게 없으면 가끔 솔라가 먼저 자기 이야기를 한다 (채팅 읽기만 반복하지 않게)
+        if (++turnsSinceStory >= STORY_EVERY) {
+            turnsSinceStory = 0;
+            return new Plan(Kind.STORY, null, null, null);
         }
         if (groupTurn) return new Plan(Kind.GROUP, null, null, null);
         if (topic != null && nowMs < topicUntil) {
@@ -144,7 +196,8 @@ public class Director {
     /** 질문을 실제로 말했을 때 부른다 */
     public synchronized String startAsk(Question q, String preface, long nowMs) {
         active = q;
-        asked.add(q.id());
+        askedAt2.put(q.id(), nowMs);
+        turnsSinceStory = 0;
         askedAt = nowMs;
         lastAskAt = nowMs;
         turnsSinceAsk = 0;
@@ -248,20 +301,25 @@ public class Director {
             case "dinner" -> n1 + "님 " + b1 + ", " + n2 + "님 " + b2 + "! 둘 다 맛있겠다, 다른 분들은 뭐 먹었어요?";
             case "game" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 둘이 같이 하면 재밌겠다!";
             case "mood" -> n1 + "님, " + n2 + "님 둘 다 오늘 하루 잘 버텼어요. 솔라가 박수 보냄 해요!";
-            default -> n1 + "님, " + n2 + "님 고마워요! " + q.comment();
+            default -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 다른 분들은 어때요?";
         };
         if (v == 2) return switch (q.id()) {
             case "dinner" -> b1 + rang(b1) + " " + b2 + "! " + n1 + "님, " + n2 + "님 덕분에 솔라 지구 메뉴 공부 끝!";
             case "game" -> b1 + "파 " + n1 + "님, " + b2 + "파 " + n2 + "님! 솔라는 응원 담당 할게요.";
             case "mood" -> b1.replace(" 분", "") + " " + n1 + "님도, " + b2.replace(" 분", "") + " " + n2 + "님도 오늘은 솔라랑 같이 쉬어 가요.";
-            default -> n1 + "님, " + n2 + "님 이야기 재밌어요! " + q.comment();
+            default -> b1 + rang(b1) + " " + b2 + "! " + n1 + "님, " + n2 + "님 덕분에 솔라 지구 공부함 해요.";
         };
         return switch (q.id()) {
             case "dinner" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 솔라 별엔 음식이 없어서 다 궁금함 해요.";
             case "game" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 솔라는 구경만 해도 두근두근해요.";
             case "mood" -> n1 + "님처럼 " + b1.replace(" 분", "") + " 날도, " + n2 + "님처럼 " + b2.replace(" 분", "") + " 날도 있죠. 솔라가 옆에서 반짝일게요.";
-            default -> n1 + "님, " + n2 + "님 이야기 재밌어요! " + q.comment();
+            default -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! " + q.comment();
         };
+    }
+
+    /** 자기 이야기 한 줄 (돌아가며, 한 바퀴 돌기 전엔 같은 이야기 안 함) */
+    public synchronized String storyLine() {
+        return STORIES.get(storyTurn++ % STORIES.size());
     }
 
     public synchronized Status status(long nowMs) {
@@ -279,12 +337,26 @@ public class Director {
         return active;
     }
 
-    /** 아직 안 던진 질문을 돌아가며. 다 던졌으면 null (이 데모는 질문이 3개뿐 — 실제라면 캐릭터별 질문 목록이 늘어난다) */
-    private Question nextUnasked() {
+    private boolean available(Question q, long nowMs) {
+        Long t = askedAt2.get(q.id());
+        return t == null || nowMs - t >= REASK_MS;
+    }
+
+    /** 지금 물을 수 있는 질문을 돌아가며 (최근 4분 안에 한 질문은 빼고). 없으면 null */
+    private Question nextUnasked(long nowMs) {
         for (int i = 0; i < ROTATION.size(); i++) {
             Question q = ROTATION.get(rotation++ % ROTATION.size());
-            if (!asked.contains(q.id())) return q;
+            if (available(q, nowMs)) return q;
         }
+        return null;
+    }
+
+    /** 떡밥 주제에 맞는 질문 중 지금 물을 수 있는 것 (음식이면 저녁 → 야식 순) */
+    Question questionFor(String hotLabel, long nowMs) {
+        List<Question> candidates = LineWriter.FOOD_KW.contains(hotLabel) ? List.of(DINNER, SNACK)
+                : LineWriter.GAME_KW.contains(hotLabel) ? List.of(GAME, WEEKEND)
+                : hotLabel.equals("피곤") ? List.of(MOOD, WEEKEND) : List.of(DINNER);
+        for (Question q : candidates) if (available(q, nowMs)) return q;
         return null;
     }
 
@@ -297,12 +369,6 @@ public class Director {
         return best;
     }
 
-    static Question questionFor(String hotLabel) {
-        if (LineWriter.FOOD_KW.contains(hotLabel)) return DINNER;
-        if (LineWriter.GAME_KW.contains(hotLabel)) return GAME;
-        if (hotLabel.equals("피곤")) return MOOD;
-        return DINNER;
-    }
 
     static String prefaceFor(String hotLabel) {
         if (hotLabel.equals("피곤")) return "오늘 피곤한 분이 많네요. ";

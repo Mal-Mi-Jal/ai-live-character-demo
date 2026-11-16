@@ -313,8 +313,15 @@ public class LiveService {
                     });
             return;
         }
+        if (plan.kind() == Director.Kind.STORY) {
+            // 솔라가 먼저 자기 이야기 한 줄 (템플릿, 설정표 바탕)
+            String line = d.storyLine();
+            speakSpecial(turnNo, "story", new LiveRoom.GroupMoment("솔라 이야기", 0, List.of(), line), ruleLabel, bots);
+            return;
+        }
         if (plan.kind() == Director.Kind.GROUP) {
-            LiveRoom.GroupMoment g = room.groupMoment(now);
+            // 인사 묶음은 빼고, 같은 주제는 3분 안에 다시 묶지 않는다 (같은 말 되풀이로 정적이던 문제)
+            LiveRoom.GroupMoment g = room.groupMoment(now, 180_000, true);
             if (g != null) {
                 synchronized (statsLock) {
                     groupTurns++;

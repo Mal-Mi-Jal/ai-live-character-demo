@@ -103,7 +103,33 @@ public class DonationQueue {
     private String thanks(Donation d) {
         String t = THANKS.get(thanksTurn++ % THANKS.size())
                 .replace("{nick}", d.nickname()).replace("{amt}", amount(d.amount()));
-        return d.amount() >= 10_000 ? t + BIG_EXTRA : t;
+        if (d.amount() >= 10_000) t += BIG_EXTRA;
+        String reply = reply(d.message(), thanksTurn);
+        return reply == null ? t : t + " " + reply;
+    }
+
+    private static final List<String> PRAISE = List.of("재밌", "재미있", "좋아", "최고", "귀여", "사랑", "응원", "힘내");
+
+    /**
+     * 후원 메시지에 짧게 한 마디 (템플릿). 무엇에 답할지는 LineWriter의 주제 판단과 칭찬 단어로 코드가 정한다.
+     * 메시지가 없거나 금칙어로 안 읽은 경우는 답하지 않는다. 사용자 피드백(2026-11-17): 감사만 하면 정적이다
+     */
+    static String reply(String message, int turn) {
+        if (message == null || message.isBlank()) return null;
+        int v = Math.floorMod(turn, 2);
+        for (String w : PRAISE) {
+            if (message.contains(w)) return v == 0 ? "그 말 들으니까 꼬리별이 막 흔들려요!" : "솔라 진짜 힘남 해요!";
+        }
+        LineWriter.Detected d = LineWriter.detect(message, 0);
+        String kw = d.keyword();
+        return switch (d.topic()) {
+            case FOOD -> v == 0 ? kw + " 맛있었어요? 부러움!" : kw + "! 솔라도 언젠가 먹어 볼래요.";
+            case GAME -> v == 0 ? kw + " 이기면 자랑하러 와요!" : kw + " 같이 구경하고 싶음 해요!";
+            case TIRED -> v == 0 ? "오늘 푹 쉬어요. 토닥토닥." : "피곤할 땐 쉬어 가요, 솔라가 지켜 줄게요.";
+            case GREETING -> v == 0 ? "와 줘서 반가워요!" : "솔라도 반가움 많이 해요!";
+            case QUESTION -> v == 0 ? "그 질문은… 비밀이에요, 히히." : "음, 솔라 별 머리로 생각해 볼게요!";
+            default -> v == 0 ? "메시지까지 고마워요!" : "그 말 오래 기억할게요!";
+        };
     }
 
     static String batchLine(List<Donation> all) {

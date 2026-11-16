@@ -54,8 +54,10 @@ class DirectorTest {
         Director.Plan after = d.next(t + 25_000, Map.of("치킨", 9), false);
         assertThat(after.kind()).isEqualTo(Director.Kind.REACT);
         assertThat(after.prefer().test(chat(9, "e", "피자 시켰어요", t + 24_000))).isTrue();
-        // 같은 질문(저녁)은 다시 안 한다. 다른 떡밥(피곤)이면 60초 뒤 그 질문
-        assertThat(d.next(t + 61_000, Map.of("치킨", 9), false).kind()).isNotEqualTo(Director.Kind.ASK);
+        // 같은 질문(저녁)은 4분 안에 다시 안 한다 → 음식 떡밥이면 야식 질문으로. 피곤 떡밥이면 기분 질문
+        Director.Plan food = d.next(t + 61_000, Map.of("치킨", 9), false);
+        assertThat(food.kind()).isEqualTo(Director.Kind.ASK);
+        assertThat(food.question().id()).isEqualTo("snack");
         Director.Plan mood = d.next(t + 62_000, Map.of("피곤", 7), false);
         assertThat(mood.kind()).isEqualTo(Director.Kind.ASK);
         assertThat(mood.question().id()).isEqualTo("mood");
@@ -72,18 +74,18 @@ class DirectorTest {
 
     /** 3분 라이브를 가상 시계로 돌려 진행 대본을 출력한다 (봇 300명, 템플릿 대사) */
     @Test
-    void 진행_대본_3분() {
+    void 진행_대본_5분() {
         BotAudience audience = new BotAudience(300, 42);
         LiveRoom room = new LiveRoom(PickRule.FAIR, 1, 3, 5_000, 42);
         Director d = new Director();
         long next = 3_000;
         int turn = 0, asks = 0, onTopicDuringAsk = 0, reactsDuringAsk = 0, answered = 0;
         StringBuilder script = new StringBuilder();
-        for (long now = 0; now < 180_000; now += 100) {
+        for (long now = 0; now < 300_000; now += 100) {
             for (BotAudience.Sent s : audience.step(100)) room.receive(s.bot().id(), s.bot().nickname(), s.text(), s.gift(), now, false);
             if (now < next) continue;
             turn++;
-            Director.Plan p = d.next(now, room.hotTopics(now), turn % 4 == 0);
+            Director.Plan p = d.next(now, room.hotTopics(now), turn % 7 == 0);
             String line;
             switch (p.kind()) {
                 case ASK -> {
@@ -99,8 +101,9 @@ class DirectorTest {
                     line = "[답 " + a.total() + "명] " + a.line();
                 }
                 case TALK -> line = "[이어 말하기] " + d.talkMaterial(room.recentChats(), room.voiceCalled()).templateLine();
+                case STORY -> line = "[혼잣말] " + d.storyLine();
                 case GROUP -> {
-                    LiveRoom.GroupMoment g = room.groupMoment(now);
+                    LiveRoom.GroupMoment g = room.groupMoment(now, 180_000, true);
                     line = g == null ? null : "[묶음] " + g.line();
                 }
                 default -> line = null;
@@ -121,7 +124,7 @@ class DirectorTest {
             script.append(String.format("%5.1f초  %s%n", now / 1000.0, line));
             next = now + Math.round(line.length() / VoiceModeTest.CHARS_PER_SEC * 1000) + 400;
         }
-        System.out.println("진행 대본 (봇 300명, 3분, 시드 42, 템플릿 대사)");
+        System.out.println("진행 대본 (봇 300명, 5분, 시드 42, 템플릿 대사)");
         System.out.print(script);
         System.out.printf("질문 %d번, 답한 팬 %d명, 질문 중 목소리 반응 %d번 중 답에 반응 %d번%n",
                 asks, answered, reactsDuringAsk, onTopicDuringAsk);

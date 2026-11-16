@@ -15,7 +15,7 @@ class DonationQueueTest {
         DonationQueue.Plan p1 = q.next(1_000, false);
         assertThat(p1.kind()).isEqualTo(DonationQueue.Kind.READ);
         assertThat(p1.readText()).isEqualTo("에이님 1,000원 후원. 솔라 화이팅");
-        assertThat(p1.thanks()).isEqualTo("에이님 1,000원 선물 감사합니다~");
+        assertThat(p1.thanks()).startsWith("에이님 1,000원 선물 감사합니다~ "); // + 메시지에 짧은 답
 
         DonationQueue.Plan p2 = q.next(2_000, false);
         assertThat(p2.readText()).isEqualTo("비님 10,000원 후원"); // 메시지 없으면 알림만
@@ -33,6 +33,14 @@ class DonationQueueTest {
         assertThat(q.next(2_000, false, false).kind()).isEqualTo(DonationQueue.Kind.NONE); // 일반 채팅 차례
         assertThat(q.snapshot()).extracting(DonationQueue.Donation::nickname).containsExactly("비");
         assertThat(q.next(3_000, false, true).items().get(0).nickname()).isEqualTo("비");
+    }
+
+    @Test
+    void 후원_메시지에_주제에_맞게_짧게_답한다() {
+        assertThat(DonationQueue.reply("솔라 오늘 방송 재밌어요!", 0)).contains("꼬리별");
+        assertThat(DonationQueue.reply("저녁 라면 먹었어요", 0)).startsWith("라면");
+        assertThat(DonationQueue.reply("야근해서 피곤해", 0)).contains("쉬어요");
+        assertThat(DonationQueue.reply(null, 0)).isNull(); // 메시지 없으면 감사만
     }
 
     @Test
