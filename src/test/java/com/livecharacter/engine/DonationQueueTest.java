@@ -15,7 +15,7 @@ class DonationQueueTest {
         DonationQueue.Plan p1 = q.next(1_000, false);
         assertThat(p1.kind()).isEqualTo(DonationQueue.Kind.READ);
         assertThat(p1.readText()).isEqualTo("에이님 1,000원 후원. 솔라 화이팅");
-        assertThat(p1.thanks()).startsWith("에이님 1,000원 선물 감사합니다~ "); // + 메시지에 짧은 답
+        assertThat(p1.thanks()).isEqualTo("에이님 1,000원 선물 감사합니다~"); // "화이팅"은 주제를 모르니 아는 척 없이 감사만
 
         DonationQueue.Plan p2 = q.next(2_000, false);
         assertThat(p2.readText()).isEqualTo("비님 10,000원 후원"); // 메시지 없으면 알림만
@@ -41,6 +41,8 @@ class DonationQueueTest {
         assertThat(DonationQueue.reply("저녁 라면 먹었어요", 0)).startsWith("라면");
         assertThat(DonationQueue.reply("야근해서 피곤해", 0)).contains("쉬어요");
         assertThat(DonationQueue.reply(null, 0)).isNull(); // 메시지 없으면 감사만
+        assertThat(DonationQueue.reply("시험 끝났다!", 0)).contains("축하"); // 확실한 축하 거리
+        assertThat(DonationQueue.reply("음 그렇구나 오늘은 좀", 0)).isNull(); // 모르는 말엔 아는 척하지 않고 감사만
     }
 
     @Test

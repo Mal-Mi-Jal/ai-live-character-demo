@@ -63,7 +63,8 @@ public class Director {
     public record Status(String topic, boolean asking, long remainingMs, String ask) {
     }
 
-    public static final long ANSWER_MS = 20_000;
+    /** 질문 뒤 답을 모으는 시간. 20초였을 땐 질문 말하기 + 정적에 절반이 가서 답을 한 개쯤밖에 못 읽었다 → 30초 */
+    public static final long ANSWER_MS = 30_000;
     public static final long TOPIC_MS = 30_000;
     /** 질문과 질문 사이 최소 간격 */
     public static final long ASK_GAP_MS = 60_000;

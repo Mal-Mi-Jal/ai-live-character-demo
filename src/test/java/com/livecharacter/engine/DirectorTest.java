@@ -31,29 +31,29 @@ class DirectorTest {
         assertThat(during.prefer().test(chat(2, "b", "ㅋㅋㅋ", t + 1_000))).isFalse();
         assertThat(during.prefer().test(chat(3, "c", "라면", t - 1_000))).isFalse(); // 질문 전 채팅은 답이 아니다
 
-        assertThat(d.next(t + 20_000, Map.of(), false).kind()).isEqualTo(Director.Kind.ANSWERS);
+        assertThat(d.next(t + Director.ANSWER_MS, Map.of(), false).kind()).isEqualTo(Director.Kind.ANSWERS);
         List<Chat> recent = List.of(
                 chat(1, "a", "라면 먹었어요", t + 1_000),
                 chat(2, "a", "아 아니다 치킨", t + 2_000),   // 한 사람은 마지막 답만
                 chat(3, "b", "치킨!", t + 3_000),
                 chat(4, "c", "김밥이요", t + 4_000),
                 chat(5, "d", "떡볶이", t - 5_000));          // 질문 전
-        Director.Answers a = d.finishAsk(recent, Set.of("a"), t + 20_000);
+        Director.Answers a = d.finishAsk(recent, Set.of("a"), t + Director.ANSWER_MS);
         assertThat(a.counts()).isEqualTo(Map.of("치킨", 2, "김밥", 1));
         assertThat(a.total()).isEqualTo(3);
         assertThat(a.highlightNick()).isEqualTo("팬b"); // 이미 목소리로 불린 a 말고
         assertThat(a.line()).startsWith("치킨 2명, 김밥 1명! 팬b님 답 고마워요.");
 
         // 정리 바로 다음 차례는 이어 말하기: 서로 다른 답 2개, 아직 목소리로 안 불린 팬 먼저
-        assertThat(d.next(t + 22_000, Map.of(), true).kind()).isEqualTo(Director.Kind.TALK);
+        assertThat(d.next(t + Director.ANSWER_MS + 2_000, Map.of(), true).kind()).isEqualTo(Director.Kind.TALK);
         Director.Talk talk = d.talkMaterial(recent, Set.of("a"));
         assertThat(talk.nicknames()).containsExactly("팬c", "팬b"); // 최근 답부터, 김밥(c)·치킨(b) / a는 이미 불림
         assertThat(talk.templateLine()).isEqualTo("팬c님은 김밥, 팬b님은 치킨! 솔라 별엔 음식이 없어서 다 궁금함 해요.");
 
         // 그 뒤 30초는 같은 주제 채팅을 먼저 본다, 다음 질문은 60초 뒤
-        Director.Plan after = d.next(t + 25_000, Map.of("치킨", 9), false);
+        Director.Plan after = d.next(t + Director.ANSWER_MS + 5_000, Map.of("치킨", 9), false);
         assertThat(after.kind()).isEqualTo(Director.Kind.REACT);
-        assertThat(after.prefer().test(chat(9, "e", "피자 시켰어요", t + 24_000))).isTrue();
+        assertThat(after.prefer().test(chat(9, "e", "피자 시켰어요", t + Director.ANSWER_MS + 4_000))).isTrue();
         // 같은 질문(저녁)은 4분 안에 다시 안 한다 → 음식 떡밥이면 야식 질문으로. 피곤 떡밥이면 기분 질문
         Director.Plan food = d.next(t + 61_000, Map.of("치킨", 9), false);
         assertThat(food.kind()).isEqualTo(Director.Kind.ASK);

@@ -92,6 +92,7 @@ public class LiveService {
         java.util.concurrent.ThreadLocalRandom r = java.util.concurrent.ThreadLocalRandom.current();
         return switch (kind) {
             case "ask" -> r.nextLong(3000, 5000);
+            case "answer" -> r.nextLong(1000, 2000);
             case "talk", "story", "answers", "opening" -> r.nextLong(2000, 4000);
             default -> r.nextLong(1500, 3500);
         };
@@ -132,7 +133,9 @@ public class LiveService {
     private final List<ChatView> donationChats = new ArrayList<>();
     private boolean donationsChanged;
     private long donationSeq;
-    private volatile boolean lastWasDonation;
+    /** 마지막 후원 차례 뒤로 지난 일반 차례 수. 후원은 3차례에 한 번만 (사용자 피드백 2026-11-17: 후원만 읽고 채팅은 안 읽는다) */
+    private volatile int turnsSinceDonation = 99;
+    private static final int DONATION_EVERY = 3;
     private final double botGiftScale;
     /** 다음 라이브 첫 차례에 말할 오프닝 (지난 라이브 요약) */
     private volatile String pendingOpening;
@@ -292,13 +295,13 @@ public class LiveService {
         Director d = director;
         // 후원: 떡밥 구간이 아니면 한 차례씩 번갈아 읽는다 (일반 채팅 차례를 다 빼앗지 않게).
         // 떡밥 구간 중이면 보류, 너무 쌓이면 메시지를 건너뛰고 한 줄로 묶어 감사
-        DonationQueue.Plan dp = donations.next(now, d.inSegment(), !lastWasDonation);
+        DonationQueue.Plan dp = donations.next(now, d.inSegment(), turnsSinceDonation >= DONATION_EVERY - 1);
         if (dp.kind() != DonationQueue.Kind.NONE) {
-            lastWasDonation = true;
+            turnsSinceDonation = 0;
             speakDonation(turnNo, dp);
             return;
         }
-        lastWasDonation = false;
+        turnsSinceDonation++;
         boolean groupTurn = groupEvery > 0 && turnNo % groupEvery == 0;
         Director.Plan plan = d.next(now, room.hotTopics(now), groupTurn);
 
@@ -368,9 +371,10 @@ public class LiveService {
             scheduleTurn(IDLE_MS);
             return;
         }
+        List<LiveRoom.Reaction> reactions = answerLines(r.reactions(), d.active());
         // LLM은 방 잠금 밖, 스케줄러 스레드 밖에서 부른다. 늦으면 템플릿 대사가 나간다
-        llm.rewrite(r.reactions())
-                .completeOnTimeout(new HaikuLineWriter.Result(r.reactions(), true, llmTimeoutMs,
+        llm.rewrite(reactions)
+                .completeOnTimeout(new HaikuLineWriter.Result(reactions, true, llmTimeoutMs,
                         List.of("시간 초과"), 0, 0), llmTimeoutMs, TimeUnit.MILLISECONDS)
                 .thenAccept(res -> {
                     LiveRoom.Reaction x = res.reactions().get(0);
@@ -383,7 +387,8 @@ public class LiveService {
                         voiceStarts.add(x.waitMs() + (System.currentTimeMillis() - now));
                     }
                     record(res);
-                    long pause = pauseAfter("fan");
+                    // 질문 답을 모으는 중이면 정적을 짧게 해서 답을 여러 개 읽어 준다
+                    long pause = pauseAfter(director.active() != null ? "answer" : "fan");
                     template.convertAndSend("/topic/speak", new SpeakView(turnNo, "fan", x, null, r.screenAcks(),
                             ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
                     scheduleTurn(ms + pause);
@@ -449,6 +454,37 @@ public class LiveService {
             inTokens += res.inputTokens();
             outTokens += res.outputTokens();
         }
+    }
+
+    private int answerTurn;
+
+    /**
+     * 질문의 답을 모으는 중이면, 주제 분류가 모르는 답("집에서 쉴래요")도 그 질문의 답 칸으로 반응한다.
+     * 처음엔 이런 답에 "말 들었어요! 고마워요~" 같은 아무 말이 나갔다 (사용자 피드백 2026-11-17).
+     * 음식·게임·피곤처럼 이미 맞는 반응이 있는 주제는 그대로 둔다
+     */
+    private List<LiveRoom.Reaction> answerLines(List<LiveRoom.Reaction> rs, Director.Question q) {
+        if (q == null) return rs;
+        List<LiveRoom.Reaction> out = new ArrayList<>();
+        for (LiveRoom.Reaction x : rs) {
+            String bucket = q.bucketOf(x.chatText());
+            boolean generic = x.topic() == com.livecharacter.engine.LineWriter.Topic.OTHER
+                    || x.topic() == com.livecharacter.engine.LineWriter.Topic.GREETING
+                    || x.topic() == com.livecharacter.engine.LineWriter.Topic.QUESTION;
+            if (bucket == null || !generic || x.recall() != null) {
+                out.add(x);
+                continue;
+            }
+            String label = bucket.equals("좋았던 분") ? "좋은 하루" : bucket.equals("피곤한 분") ? "피곤한 하루" : bucket;
+            String quote = x.chatText().length() <= 16 ? "\"" + x.chatText() + "\" " : "";
+            String line = switch (answerTurn++ % 3) {
+                case 0 -> quote + label + " 한 표 추가요!";
+                case 1 -> x.nickname() + "님은 " + label + "! 좋다~";
+                default -> quote + "오, " + label + "! 좋아요~";
+            };
+            out.add(x.withLine(line, com.livecharacter.engine.LineWriter.Emotion.EXCITED, "template"));
+        }
+        return out;
     }
 
     private void record(HaikuLineWriter.Result res) {

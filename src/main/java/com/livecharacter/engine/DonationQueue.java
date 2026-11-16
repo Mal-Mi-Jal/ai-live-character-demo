@@ -127,6 +127,8 @@ public class DonationQueue {
         return reply == null ? t : t + " " + reply;
     }
 
+    /** 축하할 일 (끝났다, 합격, 생일…) — 확실한 것만 */
+    private static final List<String> CELEBRATE = List.of("끝났", "합격", "생일", "성공", "취업", "퇴근");
     private static final List<String> PRAISE = List.of("재밌", "재미있", "좋아", "최고", "귀여", "사랑", "응원", "힘내");
 
     /**
@@ -139,6 +141,9 @@ public class DonationQueue {
         for (String w : PRAISE) {
             if (message.contains(w)) return v == 0 ? "그 말 들으니까 꼬리별이 막 흔들려요!" : "솔라 진짜 힘남 해요!";
         }
+        for (String w : CELEBRATE) {
+            if (message.contains(w)) return v == 0 ? "축하해요! 솔라도 같이 기뻐요." : "와, 축하해요! 오늘 좋은 날이네요.";
+        }
         LineWriter.Detected d = LineWriter.detect(message, 0);
         String kw = d.keyword();
         return switch (d.topic()) {
@@ -147,7 +152,8 @@ public class DonationQueue {
             case TIRED -> v == 0 ? "오늘 푹 쉬어요. 토닥토닥." : "피곤할 땐 쉬어 가요, 솔라가 지켜 줄게요.";
             case GREETING -> v == 0 ? "와 줘서 반가워요!" : "솔라도 반가움 많이 해요!";
             case QUESTION -> v == 0 ? "그 질문은… 비밀이에요, 히히." : "음, 솔라 별 머리로 생각해 볼게요!";
-            default -> v == 0 ? "메시지까지 고마워요!" : "그 말 오래 기억할게요!";
+            // 무슨 말인지 코드가 확신하지 못하면 아는 척하지 않고 감사만 한다 (예: "시험 끝났다!"에 "그 말 오래 기억할게요!"가 나가서 어색했다)
+            default -> null;
         };
     }
 
