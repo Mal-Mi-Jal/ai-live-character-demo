@@ -60,11 +60,11 @@ class VoiceModeTest {
      * 지금 데모 설정: 한 차례에 목소리 1명(35자 안팎 템플릿 대사) + 화면 ❤ 3명, 4차례마다 묶음 인정(3명 이상일 때).
      * 대사 길이는 실제 템플릿 대사 길이로 계산한다.
      */
-    static Full voiceDemo(PickRule rule, int bots, long seed) {
+    static Full voiceDemo(PickRule rule, int bots, long voiceMaxAgeMs, long seed) {
         BotAudience audience = new BotAudience(bots, seed);
         java.util.Map<String, BotAudience.Kind> kind = new java.util.HashMap<>();
         audience.bots().forEach(b -> kind.put(b.id(), b.kind()));
-        LiveRoom room = new LiveRoom(rule, 1, 3, seed);
+        LiveRoom room = new LiveRoom(rule, 1, 3, voiceMaxAgeMs, seed);
         long next = 3000;
         int turns = 0, groups = 0;
         java.util.List<Long> starts = new java.util.ArrayList<>();
@@ -115,18 +115,22 @@ class VoiceModeTest {
     @Test
     void 지금_데모_설정_목소리_1명_화면_3명_묶음_인정() {
         System.out.println("음성 데모 설정 10분 (목소리 1명 + 화면 ❤ 3명, 4차례마다 묶음, 템플릿 대사 길이, 시드 42)");
-        System.out.println("봇   | 규칙        | 차례(묶음) | 목소리로 불린 팬 | 하나라도 인정 | 조용한 팬 목소리/인정 | 고르기까지 대기 p50 | p95 (+대사 생성 시간)");
+        System.out.println("봇   | 목소리 창 | 규칙        | 차례(묶음) | 목소리로 불린 팬 | 하나라도 인정 | 조용한 팬 목소리/인정 | 고른 채팅 나이 p50 | p95");
         Full c300 = null, a300 = null;
         for (int bots : new int[]{300, 1000}) {
-            for (PickRule rule : PickRule.all()) {
-                Full f = voiceDemo(rule, bots, 42);
-                if (bots == 300 && rule == PickRule.FAIR) c300 = f;
-                if (bots == 300 && rule == PickRule.RANDOM) a300 = f;
-                System.out.printf("%4d | %-10s | %3d(%2d) | %5.1f%% | %5.1f%% | %5.1f%% / %5.1f%% | %5.1f초 | %5.1f초%n",
-                        bots, f.label(), f.turns(), f.groups(), f.voice() * 100, f.any() * 100,
-                        f.quiet() * 100, f.quietAny() * 100, f.p50() / 1000.0, f.p95() / 1000.0);
+            for (long age : new long[]{30_000, 10_000, 5_000}) {
+                for (PickRule rule : PickRule.all()) {
+                    Full f = voiceDemo(rule, bots, age, 42);
+                    if (bots == 300 && age == 10_000 && rule == PickRule.FAIR) c300 = f;
+                    if (bots == 300 && age == 10_000 && rule == PickRule.RANDOM) a300 = f;
+                    System.out.printf("%4d | %2d초 | %-10s | %3d(%2d) | %5.1f%% | %5.1f%% | %5.1f%% / %5.1f%% | %5.1f초 | %5.1f초%n",
+                            bots, age / 1000, f.label(), f.turns(), f.groups(), f.voice() * 100, f.any() * 100,
+                            f.quiet() * 100, f.quietAny() * 100, f.p50() / 1000.0, f.p95() / 1000.0);
+                }
             }
         }
+        // 10초 창이면 목소리로 읽는 채팅이 10초보다 오래되지 않는다
+        assertThat(c300.p95()).isLessThanOrEqualTo(10_000);
         assertThat(c300.any()).isGreaterThan(c300.voice()); // 화면·묶음 인정이 목소리보다 넓게 닿는다
         assertThat(c300.quietAny()).isGreaterThan(a300.quietAny());
     }

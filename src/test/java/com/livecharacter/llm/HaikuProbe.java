@@ -37,7 +37,7 @@ class HaikuProbe {
 
         BotAudience audience = new BotAudience(300, 42);
         // 지금 라이브와 같은 설정: 한 차례에 목소리 1명 (화면 ❤ 3명은 LLM을 안 쓴다) → 호출당 대사 1줄
-        LiveRoom room = new LiveRoom(PickRule.FAIR, 1, 3, 42);
+        LiveRoom room = new LiveRoom(PickRule.FAIR, 1, 3, 5_000, 42);
         long now = 0;
         for (; now < 180_000; now += 100) {
             for (BotAudience.Sent s : audience.step(100)) room.receive(s.bot().id(), s.bot().nickname(), s.text(), s.gift(), now, false);

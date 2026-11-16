@@ -68,6 +68,7 @@ public class LiveRoom {
     private final FanMemory memory = new FanMemory();
     private final int k;
     private final int screenK;
+    private final long voiceMaxAgeMs;
     private final Random rnd;
 
     private PickRule rule;
@@ -89,14 +90,18 @@ public class LiveRoom {
     private int lastPool;
 
     public LiveRoom(PickRule rule, int k, long seed) {
-        this(rule, k, 0, seed);
+        this(rule, k, 0, CARRY_MS, seed);
     }
 
-    /** @param screenK 목소리 k명 말고, 같은 규칙 순서로 화면에 이름만 띄울 인원 */
-    public LiveRoom(PickRule rule, int k, int screenK, long seed) {
+    /**
+     * @param screenK        목소리 k명 말고, 같은 규칙으로 화면에 이름만 띄울 인원
+     * @param voiceMaxAgeMs  목소리로 답할 채팅의 최대 나이. 이보다 오래된 채팅은 화면·묶음 인정 후보로만 남는다
+     */
+    public LiveRoom(PickRule rule, int k, int screenK, long voiceMaxAgeMs, long seed) {
         this.rule = rule;
         this.k = k;
         this.screenK = screenK;
+        this.voiceMaxAgeMs = voiceMaxAgeMs;
         this.rnd = new Random(seed);
     }
 
@@ -157,10 +162,25 @@ public class LiveRoom {
             List<Chat> pool = List.copyOf(unanswered.values());
             lastPool = pool.size();
 
-            List<Chat> ranked = rule.pick(new PickRule.Context(fresh, pool, ledger, k + screenK, rnd, nowMs));
-            List<Chat> picked = ranked.subList(0, Math.min(k, ranked.size()));
+            // 목소리는 최근 voiceMaxAgeMs 안의 채팅에만 답한다 (오래된 채팅을 뜬금없이 읽지 않게).
+            // 그보다 오래 기다린 채팅은 화면 ❤·묶음 인정으로 챙긴다
+            List<Chat> voicePool = new ArrayList<>();
+            for (Chat c : pool) if (nowMs - c.receivedAtMs() <= voiceMaxAgeMs) voicePool.add(c);
+            List<Chat> voiceFresh = new ArrayList<>();
+            for (Chat c : fresh) if (nowMs - c.receivedAtMs() <= voiceMaxAgeMs) voiceFresh.add(c);
+            List<Chat> picked = rule.pick(new PickRule.Context(voiceFresh, voicePool, ledger, k, rnd, nowMs));
+
+            // 목소리로 고른 사람은 화면 후보에서 뺀다 (선물을 합친 복사본일 수 있어서 id로 비교)
+            java.util.Set<String> spoken = new java.util.HashSet<>();
+            for (Chat c : picked) spoken.add(c.viewerId());
+            List<Chat> restFresh = new ArrayList<>();
+            for (Chat c : fresh) if (!spoken.contains(c.viewerId())) restFresh.add(c);
+            List<Chat> restPool = new ArrayList<>();
+            for (Chat c : pool) if (!spoken.contains(c.viewerId())) restPool.add(c);
+            List<Chat> screen = screenK == 0 ? List.of()
+                    : rule.pick(new PickRule.Context(restFresh, restPool, ledger, screenK, rnd, nowMs));
             List<Ack> acks = new ArrayList<>();
-            for (Chat c : ranked.subList(picked.size(), ranked.size())) {
+            for (Chat c : screen) {
                 unanswered.remove(c.viewerId());
                 ledger.onScreenAck(c.viewerId());
                 acks.add(new Ack(c.viewerId(), c.nickname(), c.text()));

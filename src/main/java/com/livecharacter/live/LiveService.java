@@ -99,6 +99,7 @@ public class LiveService {
                        @Value("${live.voice-chars-per-sec}") double charsPerSec,
                        @Value("${live.screen-acks}") int screenK,
                        @Value("${live.group-every}") int groupEvery,
+                       @Value("${live.voice-max-age-ms}") long voiceMaxAgeMs,
                        @Value("${live.bots}") int bots,
                        @Value("${live.chat-flush-ms}") int chatFlushMs,
                        @Value("${live.bot-step-ms}") int botStepMs,
@@ -112,7 +113,7 @@ public class LiveService {
         this.chatFlushMs = chatFlushMs;
         this.botStepMs = botStepMs;
         this.seed = seed;
-        this.room = new LiveRoom(rule, 1, screenK, seed);
+        this.room = new LiveRoom(rule, 1, screenK, voiceMaxAgeMs, seed);
         this.audience = new BotAudience(bots, seed);
     }
 
