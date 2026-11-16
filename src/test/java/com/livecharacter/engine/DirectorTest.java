@@ -44,7 +44,13 @@ class DirectorTest {
         assertThat(a.highlightNick()).isEqualTo("팬b"); // 이미 목소리로 불린 a 말고
         assertThat(a.line()).startsWith("치킨 2명, 김밥 1명! 팬b님 답 고마워요.");
 
-        // 정리 뒤 30초는 같은 주제 채팅을 먼저 본다, 다음 질문은 60초 뒤
+        // 정리 바로 다음 차례는 이어 말하기: 서로 다른 답 2개, 아직 목소리로 안 불린 팬 먼저
+        assertThat(d.next(t + 22_000, Map.of(), true).kind()).isEqualTo(Director.Kind.TALK);
+        Director.Talk talk = d.talkMaterial(recent, Set.of("a"));
+        assertThat(talk.nicknames()).containsExactly("팬c", "팬b"); // 최근 답부터, 김밥(c)·치킨(b) / a는 이미 불림
+        assertThat(talk.templateLine()).isEqualTo("팬c님은 김밥, 팬b님은 치킨! 솔라 별엔 음식이 없어서 다 궁금함 해요.");
+
+        // 그 뒤 30초는 같은 주제 채팅을 먼저 본다, 다음 질문은 60초 뒤
         Director.Plan after = d.next(t + 25_000, Map.of("치킨", 9), false);
         assertThat(after.kind()).isEqualTo(Director.Kind.REACT);
         assertThat(after.prefer().test(chat(9, "e", "피자 시켰어요", t + 24_000))).isTrue();
@@ -92,6 +98,7 @@ class DirectorTest {
                     answered += a.total();
                     line = "[답 " + a.total() + "명] " + a.line();
                 }
+                case TALK -> line = "[이어 말하기] " + d.talkMaterial(room.recentChats(), room.voiceCalled()).templateLine();
                 case GROUP -> {
                     LiveRoom.GroupMoment g = room.groupMoment(now);
                     line = g == null ? null : "[묶음] " + g.line();

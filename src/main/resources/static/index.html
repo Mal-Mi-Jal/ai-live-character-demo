@@ -257,7 +257,11 @@ setInterval(drawTopic, 1000);
 
 function renderSpeak(t) {
   renderTopic(t.topic);
-  if (t.kind === "ask") {
+  if (t.kind === "talk") {
+    showLine([el("span", "tag ask", "이어 말하기"), document.createTextNode(` ${t.group.label}`)], t.group.line, "😊", t.group.nicknames.includes(myNick()), t.speakMs);
+    $("acks").replaceChildren();
+    addHistory([el("b", null, "[이어 말하기] "), document.createTextNode(t.group.line)]);
+  } else if (t.kind === "ask") {
     showLine([el("span", "tag ask", `질문 · ${t.group.label}`), document.createTextNode(" 솔라가 채팅방에 물어봐요")], t.group.line, "🤔", false, t.speakMs);
     $("acks").replaceChildren();
     addHistory([el("b", null, "[질문] "), document.createTextNode(t.group.line)]);

@@ -211,9 +211,11 @@ public class LiveRoom {
             for (Chat c : pool) if (nowMs - c.receivedAtMs() <= voiceMaxAgeMs) voicePool.add(c);
             List<Chat> voiceFresh = new ArrayList<>();
             for (Chat c : fresh) if (nowMs - c.receivedAtMs() <= voiceMaxAgeMs) voiceFresh.add(c);
+            boolean focused = false; // 진행자가 정한 주제(질문의 답 등)에 맞춰 고른 차례인가
             if (prefer != null) {
                 List<Chat> pf = voicePool.stream().filter(prefer).toList();
                 if (!pf.isEmpty()) {
+                    focused = true;
                     voicePool = new ArrayList<>(pf);
                     List<Chat> ff = voiceFresh.stream().filter(prefer).toList();
                     // A/B 규칙은 fresh만 보므로, 맞는 채팅이 이번 틱에 없으면 pool에서 가져온다
@@ -243,7 +245,8 @@ public class LiveRoom {
                 ledger.onReacted(c, nowMs);
                 LineWriter.Detected d = LineWriter.detect(c.text(), c.gift());
                 // 기억·"또 와 줬네요"는 인사·잡담일 때만. 구체적인 말(피곤해, 라면 먹었어)엔 그 말에 답하는 게 먼저다
-                boolean generic = d.topic() == LineWriter.Topic.GREETING || d.topic() == LineWriter.Topic.OTHER;
+                // 질문의 답을 모으는 중(focused)이면 그 답에 반응하는 게 먼저라 기억은 꺼내지 않는다
+                boolean generic = !focused && (d.topic() == LineWriter.Topic.GREETING || d.topic() == LineWriter.Topic.OTHER);
                 String recall = generic ? memory.recall(c.viewerId(), d.keyword(), nowMs) : null;
                 LineWriter.Line line;
                 if (recall == null && generic && prevChatters.contains(c.viewerId()) && greetedReturning.add(c.viewerId())) {

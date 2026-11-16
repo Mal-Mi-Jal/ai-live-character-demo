@@ -22,7 +22,7 @@ import java.util.function.Predicate;
  */
 public class Director {
 
-    public enum Kind { REACT, ASK, ANSWERS, GROUP }
+    public enum Kind { REACT, ASK, ANSWERS, TALK, GROUP }
 
     /**
      * 진행자가 던지는 질문. buckets = 답 칸 → 그 칸으로 셀 키워드들.
@@ -47,6 +47,16 @@ public class Director {
     /** 답 정리 결과 (인원은 코드가 셈) */
     public record Answers(Question question, Map<String, Integer> counts, int total,
                           List<String> answerers, String highlightNick, String line) {
+    }
+
+    /**
+     * 이어 말하기 재료: 지금 주제 + 코드가 고른 답 채팅 2개 + 템플릿 대사 (LLM이 없거나 검사에 걸리면 이걸 말한다).
+     * 고른 채팅의 닉네임만 대사에 나올 수 있다.
+     */
+    public record Talk(Question question, List<Chat> chats, String templateLine) {
+        public List<String> nicknames() {
+            return chats.stream().map(Chat::nickname).toList();
+        }
     }
 
     /** 지금 진행 상태 (화면 표시용) */
@@ -90,6 +100,9 @@ public class Director {
     private final Set<String> asked = new java.util.HashSet<>();
     private Question topic;
     private long topicUntil;
+    /** 답 정리 바로 다음 차례에 그 주제로 이어 말하기를 한 번 한다 */
+    private boolean talkPending;
+    private long topicAskedAt;
 
     /**
      * @param hot 최근 30초에 주제별로 말한 팬 수 (LiveRoom.hotTopics)
@@ -101,6 +114,10 @@ public class Director {
             Question q = active;
             long since = askedAt;
             return new Plan(Kind.REACT, q, c -> c.receivedAtMs() >= since && q.bucketOf(c.text()) != null, null);
+        }
+        if (talkPending && topic != null) {
+            talkPending = false;
+            return new Plan(Kind.TALK, topic, null, null);
         }
         turnsSinceAsk++;
         if (nowMs - lastAskAt >= ASK_GAP_MS) {
@@ -165,6 +182,8 @@ public class Director {
 
         active = null;
         topicUntil = nowMs + TOPIC_MS;
+        topicAskedAt = askedAt;
+        talkPending = !lastBucket.isEmpty();
         return new Answers(q, counts, lastBucket.size(), List.copyOf(lastBucket.keySet()), highlight,
                 answersLine(q, sorted, highlight));
     }
@@ -180,6 +199,42 @@ public class Director {
         if (highlight != null) sb.append(highlight).append("님 답 고마워요. ");
         sb.append(q.comment());
         return sb.toString();
+    }
+
+    /**
+     * 이어 말하기 재료를 고른다: 질문 뒤 답 중에서 서로 다른 답 칸 2개, 아직 목소리로 안 불린 팬 먼저 (공정).
+     * @param said 이번 라이브에서 이미 이름이 나온 팬(목소리) — 되도록 피한다
+     */
+    public synchronized Talk talkMaterial(List<Chat> recent, Set<String> said) {
+        Question q = topic;
+        Map<String, Chat> byBucket = new LinkedHashMap<>();
+        // 1차: 아직 안 불린 팬, 2차: 아무나 (같은 칸 중에선 가장 최근 답)
+        for (int pass = 0; pass < 2 && byBucket.size() < 2; pass++) {
+            for (int i = recent.size() - 1; i >= 0 && byBucket.size() < 2; i--) {
+                Chat c = recent.get(i);
+                if (c.receivedAtMs() < topicAskedAt) continue;
+                String b = q.bucketOf(c.text());
+                if (b == null || byBucket.containsKey(b)) continue;
+                if (pass == 0 && said.contains(c.viewerId())) continue;
+                if (byBucket.values().stream().anyMatch(x -> x.viewerId().equals(c.viewerId()))) continue;
+                byBucket.put(b, c);
+            }
+        }
+        List<Chat> chats = List.copyOf(byBucket.values());
+        return new Talk(q, chats, talkTemplate(q, new ArrayList<>(byBucket.keySet()), chats));
+    }
+
+    static String talkTemplate(Question q, List<String> buckets, List<Chat> chats) {
+        if (chats.isEmpty()) return "다들 답해 줘서 고마워요! 솔라 오늘 지구 공부 많이 했어요.";
+        String n1 = chats.get(0).nickname(), b1 = buckets.get(0);
+        if (chats.size() == 1) return n1 + "님은 " + b1 + "! " + q.comment();
+        String n2 = chats.get(1).nickname(), b2 = buckets.get(1);
+        return switch (q.id()) {
+            case "dinner" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 솔라 별엔 음식이 없어서 다 궁금함 해요.";
+            case "game" -> n1 + "님은 " + b1 + ", " + n2 + "님은 " + b2 + "! 솔라는 구경만 해도 두근두근해요.";
+            case "mood" -> n1 + "님처럼 " + b1.replace(" 분", "") + " 날도, " + n2 + "님처럼 " + b2.replace(" 분", "") + " 날도 있죠. 솔라가 옆에서 반짝일게요.";
+            default -> n1 + "님, " + n2 + "님 이야기 재밌어요! " + q.comment();
+        };
     }
 
     public synchronized Status status(long nowMs) {

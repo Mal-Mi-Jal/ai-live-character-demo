@@ -89,6 +89,8 @@ public class LiveService {
     private final Map<String, Long> rejected = new LinkedHashMap<>();
     private long llmLines, templateLines, inTokens, outTokens;
     private final List<Long> voiceStarts = new ArrayList<>();
+    /** 최근에 말한 대사 (이어 말하기에서 같은 표현을 되풀이하지 않게 LLM에 넘긴다) */
+    private final java.util.ArrayDeque<String> recentLines = new java.util.ArrayDeque<>();
     private int turns, groupTurns;
     private long voiceSince = System.currentTimeMillis();
 
@@ -226,6 +228,26 @@ public class LiveService {
             speakSpecial(turnNo, "answers", new LiveRoom.GroupMoment(label, a.total(), List.of(), a.line()), ruleLabel, bots);
             return;
         }
+        if (plan.kind() == Director.Kind.TALK) {
+            Director.Talk talk = d.talkMaterial(room.recentChats(), room.voiceCalled());
+            java.util.Set<String> others = new java.util.HashSet<>();
+            for (Chat c : room.recentChats()) others.add(c.nickname());
+            List<String> recent;
+            synchronized (statsLock) {
+                recent = List.copyOf(recentLines);
+            }
+            // LLM은 잠금 밖, 스케줄러 스레드 밖. 늦으면 템플릿
+            llm.talk(talk, recent, others)
+                    .completeOnTimeout(new HaikuLineWriter.TalkResult(talk.templateLine(), com.livecharacter.engine.LineWriter.Emotion.HAPPY,
+                            "template", true, llmTimeoutMs, "시간 초과", null, 0, 0), llmTimeoutMs, TimeUnit.MILLISECONDS)
+                    .thenAccept(res -> {
+                        recordTalk(res);
+                        String label = (res.source().equals("llm") ? "Haiku" : "템플릿") + " · " + String.join(", ", talk.nicknames());
+                        speakSpecial(turnNo, "talk", new LiveRoom.GroupMoment(label, talk.chats().size(), talk.nicknames(), res.line()),
+                                ruleLabel, bots);
+                    });
+            return;
+        }
         if (plan.kind() == Director.Kind.GROUP) {
             LiveRoom.GroupMoment g = room.groupMoment(now);
             if (g != null) {
@@ -251,6 +273,7 @@ public class LiveService {
                     long ms = speakMs(x.line());
                     synchronized (statsLock) {
                         turns++;
+                        remember(x.line());
                         // 채팅 → 목소리 시작 = 고르기까지 기다린 시간 + 대사 만드는 시간
                         voiceStarts.add(x.waitMs() + (System.currentTimeMillis() - now));
                     }
@@ -266,11 +289,30 @@ public class LiveService {
         long ms = speakMs(g.line());
         synchronized (statsLock) {
             turns++;
+            remember(g.line());
         }
         template.convertAndSend("/topic/speak", new SpeakView(turnNo, kind, null, g, List.of(),
                 ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(),
                 director.status(System.currentTimeMillis())));
         scheduleTurn(ms);
+    }
+
+    /** statsLock 안에서 부른다 */
+    private void remember(String line) {
+        recentLines.addLast(line);
+        while (recentLines.size() > 5) recentLines.pollFirst();
+    }
+
+    private void recordTalk(HaikuLineWriter.TalkResult res) {
+        synchronized (statsLock) {
+            if ("llm".equals(res.source())) llmLines++;
+            else templateLines++;
+            if (!res.called()) return;
+            llmTimes.add(res.llmMs());
+            if (res.rejected() != null) rejected.merge("이어 말하기: " + res.rejected(), 1L, Long::sum);
+            inTokens += res.inputTokens();
+            outTokens += res.outputTokens();
+        }
     }
 
     private void record(HaikuLineWriter.Result res) {

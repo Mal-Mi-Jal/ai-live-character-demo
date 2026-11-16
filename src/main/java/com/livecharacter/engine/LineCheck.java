@@ -46,6 +46,44 @@ public final class LineCheck {
         }
         // 숫자는 닉네임 안에 있는 것만 허용 (금액·횟수 같은 숫자를 지어내지 않게)
         if (DIGITS.matcher(line.replace(facts.nickname(), "")).find()) return "숫자 지어냄";
+        String lore = loreBreak(line);
+        if (lore != null) return lore;
         return null;
+    }
+
+    /** 이어 말하기는 2~3문장이라 더 길게 허용 (초당 5.7자 → 약 14초) */
+    public static final int TALK_MAX_LEN = 80;
+
+    /**
+     * 설정표와 모순되는 경험. 솔라는 지구에 막 왔다 → 지구 음식을 먹어 봤다거나 게임을 해 봤다고 하면 안 된다.
+     * 실측(2026-11-16)에서 "아이스크림 먹어 봤는데"가 나왔다. 단어 목록이라 다 못 잡는다 (한계)
+     */
+    private static final List<String> LORE_BREAKS = List.of(
+            "먹어 봤", "먹어봤", "솔라도 먹었", "솔라가 먹었", "먹어 본 적 있", "해 봤는데", "해봤는데", "솔라도 해 봤", "솔라도 해봤");
+
+    static String loreBreak(String line) {
+        for (String w : LORE_BREAKS) if (line.contains(w)) return "설정 모순";
+        return null;
+    }
+
+    /**
+     * 이어 말하기 검사. 코드가 고른 팬 닉네임만 나올 수 있고, 하나 이상은 꼭 나와야 한다.
+     * @param allowed 고른 채팅의 닉네임
+     * @param others  최근 채팅한 다른 팬 닉네임 (나오면 안 됨)
+     */
+    public static String rejectTalk(String line, Collection<String> allowed, Collection<String> others) {
+        if (line == null || line.isBlank()) return "빈 문장";
+        if (line.length() > TALK_MAX_LEN) return "너무 김";
+        if (!allowed.isEmpty() && allowed.stream().noneMatch(line::contains)) return "닉네임 없음";
+        for (String o : others) {
+            if (!allowed.contains(o) && line.contains(o)) return "다른 팬 언급";
+        }
+        SafetyFilter.Result safe = SafetyFilter.check(line);
+        if (safe.blocked() || !safe.text().equals(line)) return "금칙어·개인정보";
+        for (String w : MEMORY_WORDS) if (line.contains(w)) return "기억 지어냄";
+        String rest = line;
+        for (String a : allowed) rest = rest.replace(a, "");
+        if (DIGITS.matcher(rest).find()) return "숫자 지어냄";
+        return loreBreak(line);
     }
 }
