@@ -31,4 +31,6 @@ tasks.withType<Test> {
         showStandardStreams = true
         events("passed", "failed", "skipped")
     }
+    // -Dhaiku=true 일 때만 유료 실측 테스트(HaikuProbe)가 돈다
+    systemProperty("haiku", System.getProperty("haiku", "false"))
 }

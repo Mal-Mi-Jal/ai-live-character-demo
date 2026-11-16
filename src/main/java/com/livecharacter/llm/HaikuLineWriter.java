@@ -5,6 +5,7 @@ import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.StructuredMessage;
 import com.anthropic.models.messages.StructuredMessageCreateParams;
+import com.anthropic.models.messages.ThinkingConfigDisabled;
 import com.livecharacter.engine.LineCheck;
 import com.livecharacter.engine.LineWriter;
 import com.livecharacter.engine.LiveRoom;
@@ -120,7 +121,11 @@ public class HaikuLineWriter {
             return CompletableFuture.completedFuture(new Result(reactions, false, 0, List.of(), 0, 0));
         }
         return CompletableFuture.supplyAsync(() -> call(reactions), pool)
-                .exceptionally(e -> new Result(reactions, true, 0, List.of("호출 실패: " + e.getClass().getSimpleName()), 0, 0));
+                .exceptionally(e -> {
+                    // CompletionException 안의 진짜 원인(시간 초과, 429 등)을 이름으로 남긴다
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    return new Result(reactions, true, 0, List.of("호출 실패: " + cause.getClass().getSimpleName()), 0, 0);
+                });
     }
 
     private Result call(List<LiveRoom.Reaction> reactions) {
@@ -130,6 +135,9 @@ public class HaikuLineWriter {
                 .maxTokens(2000L)
                 .system(system)
                 .outputConfig(LinesOut.class)
+                // 짧은 대사라 생각 단계가 필요 없다. 실측(2026-11-16, 20번): 생각이 켜진 기본값에서
+                // 출력이 호출당 약 900토큰·응답 p50 6.1초 → 라이브 4초 제한을 넘어 대부분 템플릿이 나갈 수준
+                .thinking(ThinkingConfigDisabled.builder().build())
                 .addUserMessage(userMessage(reactions))
                 .build();
         StructuredMessage<LinesOut> msg = client.messages().create(params);

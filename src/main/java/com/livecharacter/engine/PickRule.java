@@ -104,8 +104,10 @@ public interface PickRule {
 
         static double of(Chat c, FanLedger.Fan fan, long nowMs) {
             int reacted = fan == null ? 0 : fan.reactedCount;
-            long since = fan != null && fan.waitingSinceMs >= 0 ? fan.waitingSinceMs : c.receivedAtMs();
-            double waitSec = Math.min(MAX_WAIT_SEC, Math.max(0, (nowMs - since) / 1000.0));
+            // 기다린 시간 = "이 채팅"이 답을 못 받은 시간. 처음엔 "그 팬이 처음 말한 뒤로"를 썼는데,
+            // 음성 모드(자리가 적을 때) 시뮬레이션에서 자주 말하는 팬이 계속 이겨 조용한 팬이 무작위보다 덜 뽑혔다.
+            // 채팅 기준이면 많이 말해도 점수가 오르지 않고, 조용한 팬의 한 마디가 시간이 지나며 앞으로 온다
+            double waitSec = Math.min(MAX_WAIT_SEC, Math.max(0, (nowMs - c.receivedAtMs()) / 1000.0));
             double gift = Math.min(MAX_GIFT, c.gift() / 1000.0 * GIFT_PER_1000);
             return (reacted == 0 ? FIRST_TIME : 0) + waitSec - PER_REACTION * reacted + gift;
         }
