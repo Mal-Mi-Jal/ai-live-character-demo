@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>솔라 라이브 · 데모</title>
+<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+<style>
+  :root { --bg:#14121c; --card:#1f1c2b; --line:#332f45; --text:#ece9f5; --muted:#9a94b3; --accent:#ffcf5a; --me:#7fd6ff; --gift:#ff8fb1; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: "Pretendard", system-ui, -apple-system, "Malgun Gothic", sans-serif; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  h1 .live { background:#e5484d; color:#fff; font-size:12px; padding:2px 8px; border-radius:6px; margin-right:6px; vertical-align: middle; }
+  .layout { display:grid; grid-template-columns: 1.3fr 1fr; gap:14px; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .card h2 { font-size:14px; color:var(--muted); margin:0 0 10px; font-weight:600; }
+  /* 캐릭터 */
+  .stage { display:flex; gap:14px; align-items:flex-start; }
+  .avatar { flex:none; width:72px; height:72px; border-radius:50%; background: radial-gradient(circle at 35% 35%, #fff6c8, var(--accent) 55%, #d98a1e);
+            display:flex; align-items:center; justify-content:center; font-size:34px; box-shadow:0 0 24px #ffcf5a55; }
+  .avatar.talk { animation: glow .6s; }
+  @keyframes glow { 50% { box-shadow:0 0 44px #ffcf5acc; transform: scale(1.06);} }
+  .lines { flex:1; min-width:0; }
+  .line { background:#2a2640; border-radius:12px; padding:9px 12px; margin-bottom:8px; animation: pop .35s; }
+  .line .to { font-size:12px; color:var(--muted); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .line .to b { color:var(--text); }
+  .line.me { outline:2px solid var(--me); }
+  @keyframes pop { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform:none; } }
+  /* 채팅 */
+  #chat { height: 420px; overflow-y:auto; font-size:14px; line-height:1.5; }
+  #chat div { padding:2px 0; overflow-wrap:anywhere; }
+  #chat .nick { color:var(--muted); margin-right:6px; }
+  #chat .gift { color:var(--gift); font-weight:700; }
+  #chat .me .nick { color:var(--me); font-weight:700; }
+  #chat .hit { background:#ffcf5a22; border-radius:6px; }
+  form { display:flex; gap:8px; margin-top:10px; }
+  input, select, button { font:inherit; border-radius:10px; border:1px solid var(--line); background:#14121c; color:var(--text); padding:8px 10px; }
+  input#text { flex:1; min-width:0; }
+  input#nick { width:96px; }
+  button { background:var(--accent); color:#1b1500; font-weight:700; border:none; cursor:pointer; }
+  /* 숫자 */
+  .stats { display:grid; grid-template-columns: repeat(2, 1fr); gap:10px; }
+  .stat .v { font-size:24px; font-weight:800; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size:12px; color:var(--muted); }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .side { display:flex; flex-direction:column; gap:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span class="live">LIVE</span>솔라의 별빛 라디오 <span class="muted" id="conn">연결 중…</span></h1>
+  <div class="layout">
+    <div class="side">
+      <div class="card">
+        <h2>캐릭터 · 솔라 (지구에 막 떨어진 꼬마 별)</h2>
+        <div class="stage">
+          <div class="avatar" id="avatar">⭐</div>
+          <div class="lines" id="lines"><div class="muted">곧 첫 반응이 나와요…</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>채팅 <span id="rate" class="muted"></span></h2>
+        <div id="chat"></div>
+        <form id="form">
+          <input id="nick" placeholder="닉네임" maxlength="12">
+          <input id="text" placeholder="솔라에게 말 걸기 (예: 오늘 라면 먹었어)" maxlength="80" autocomplete="off">
+          <button>보내기</button>
+        </form>
+      </div>
+    </div>
+    <div class="side">
+      <div class="card">
+        <h2>설정 (바꾸면 숫자를 처음부터 다시 셉니다)</h2>
+        <div class="controls">
+          <label>규칙 <select id="rule"></select></label>
+          <label>봇 <select id="bots">
+            <option value="0">0명</option><option value="100">100명</option>
+            <option value="300">300명</option><option value="1000">1000명</option>
+          </select></label>
+        </div>
+        <div class="muted" id="cfg"></div>
+      </div>
+      <div class="card">
+        <h2>숫자</h2>
+        <div class="stats">
+          <div class="stat"><div class="v" id="ratio">-</div><div class="l">반응 받은 팬 / 채팅한 팬</div></div>
+          <div class="stat"><div class="v" id="fans">-</div><div class="l">반응 받은 팬 수 / 채팅한 팬 수</div></div>
+          <div class="stat"><div class="v" id="p50">-</div><div class="l">채팅 → 반응 대기 p50</div></div>
+          <div class="stat"><div class="v" id="p95">-</div><div class="l">채팅 → 반응 대기 p95</div></div>
+          <div class="stat"><div class="v" id="batch">-</div><div class="l">이번 틱 채팅 수 / 후보(1인 1줄)</div></div>
+          <div class="stat"><div class="v" id="proc">-</div><div class="l">틱 처리 시간 (서버)</div></div>
+        </div>
+        <div class="muted" style="margin-top:10px" id="meta"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+// 이 탭의 시청자 id. 새로고침해도 같은 사람으로 남게 sessionStorage에 둔다
+function makeId() { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, "0")).join(""); }
+let me = sessionStorage.getItem("viewerId"); if (!me) { me = makeId(); sessionStorage.setItem("viewerId", me); }
+$("nick").value = sessionStorage.getItem("nick") || "";
+
+const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
+client.onConnect = () => {
+  $("conn").textContent = "";
+  client.subscribe("/app/state", m => renderState(JSON.parse(m.body)));
+  client.subscribe("/topic/state", m => renderState(JSON.parse(m.body)));
+  client.subscribe("/topic/chat", m => renderChat(JSON.parse(m.body)));
+  client.subscribe("/topic/tick", m => renderTick(JSON.parse(m.body)));
+};
+client.onWebSocketClose = () => { $("conn").textContent = "연결 끊김 · 다시 연결 중…"; };
+client.activate();
+
+const control = body => client.publish({ destination: "/app/control", body: JSON.stringify(body) });
+$("rule").onchange = () => control({ rule: $("rule").value });
+$("bots").onchange = () => control({ bots: Number($("bots").value) });
+
+$("form").onsubmit = e => {
+  e.preventDefault();
+  const text = $("text").value.trim(); if (!text || !client.connected) return;
+  const nickname = $("nick").value.trim() || "나";
+  sessionStorage.setItem("nick", nickname);
+  client.publish({ destination: "/app/chat", body: JSON.stringify({ viewerId: me, nickname, text }) });
+  $("text").value = "";
+};
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function renderState(s) {
+  const sel = $("rule");
+  if (!sel.options.length) s.rules.forEach(r => sel.append(new Option(r.label, r.id)));
+  sel.value = s.rule; $("bots").value = String(s.bots);
+  $("cfg").textContent = `${s.tickMs / 1000}초마다 채팅을 묶어서 보고, 한 번에 ${s.k}명에게 반응해요. 한 사람이 여러 번 말해도 후보는 한 줄.`;
+  renderStats(s.stats);
+}
+
+let chatCount = 0, chatWindowStart = Date.now();
+function renderChat(list) {
+  const box = $("chat");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  for (const c of list) {
+    const row = el("div", c.human ? "me" : "");
+    row.dataset.seq = c.seq;
+    row.append(el("span", "nick", c.nickname));
+    if (c.gift > 0) row.append(el("span", "gift", `🎁 ${c.gift.toLocaleString()}원 `));
+    row.append(document.createTextNode(c.text)); // textContent로만 넣는다 (채팅 속 태그가 실행되지 않게)
+    box.append(row);
+  }
+  while (box.childElementCount > 200) box.firstElementChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+  chatCount += list.length;
+  const sec = (Date.now() - chatWindowStart) / 1000;
+  if (sec > 5) { $("rate").textContent = `· 초당 약 ${(chatCount / sec).toFixed(1)}줄`; chatCount = 0; chatWindowStart = Date.now(); }
+}
+
+function renderTick(t) {
+  const box = $("lines");
+  if (t.reactions.length) {
+    box.replaceChildren();
+    for (const r of t.reactions) {
+      const d = el("div", "line" + (r.human ? " me" : ""));
+      const to = el("div", "to");
+      to.append(el("b", null, r.nickname), document.createTextNode(` · "${r.chatText}"` + (r.gift ? ` 🎁${r.gift.toLocaleString()}` : "") + ` · ${(r.waitMs / 1000).toFixed(1)}초 대기`));
+      d.append(to, el("div", null, r.line));
+      box.append(d);
+    }
+    const a = $("avatar"); a.classList.remove("talk"); void a.offsetWidth; a.classList.add("talk");
+  }
+  renderStats(t.stats);
+  $("proc").textContent = `${t.tickProcessMs.toFixed(2)}ms`;
+  $("meta").textContent = `${t.ruleLabel} · 봇 ${t.bots}명 · 틱 ${t.tickNo}번째 · 누적 채팅 ${t.stats.totalChats.toLocaleString()}줄` + (t.stats.blockedChats ? ` · 금칙어로 뺀 채팅 ${t.stats.blockedChats}` : "");
+}
+
+function renderStats(s) {
+  $("ratio").textContent = s.chatters ? `${(s.reactedRatio * 100).toFixed(1)}%` : "-";
+  $("fans").textContent = `${s.reactedFans} / ${s.chatters}`;
+  $("p50").textContent = s.reactedFans ? `${(s.waitP50Ms / 1000).toFixed(1)}초` : "-";
+  $("p95").textContent = s.reactedFans ? `${(s.waitP95Ms / 1000).toFixed(1)}초` : "-";
+  $("batch").textContent = `${s.lastBatchSize} / ${s.lastCandidates}`;
+}
+</script>
+</body>
+</html>
