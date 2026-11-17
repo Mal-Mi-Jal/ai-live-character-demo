@@ -151,7 +151,8 @@ public class LiveService {
                        @Value("${live.bots}") int bots,
                        @Value("${live.chat-flush-ms}") int chatFlushMs,
                        @Value("${live.bot-step-ms}") int botStepMs,
-                       @Value("${live.seed}") long seed) {
+                       @Value("${live.seed}") long seed,
+                       @Value("${live.regular-every:0}") int regularEvery) {
         this.template = template;
         this.llm = llm;
         this.llmTimeoutMs = llmTimeoutMs;
@@ -163,6 +164,7 @@ public class LiveService {
         this.seed = seed;
         this.room = new LiveRoom(rule, 1, screenK, voiceMaxAgeMs, seed);
         room.setEchoStyle(true); // 화면 데모: 이름 부르기와 채팅 되읽기를 섞는다
+        room.setRegularEvery(regularEvery); // 기존 팬 몫 (기본 0 = 끔, RegularSlotTest 참고)
         this.botGiftScale = botGiftScale;
         this.audience = new BotAudience(bots, seed, botGiftScale);
     }

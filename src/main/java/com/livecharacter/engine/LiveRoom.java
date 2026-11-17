@@ -116,6 +116,10 @@ public class LiveRoom {
     /** 이번 라이브에서 "또 와 줬네요"를 이미 말한 팬 (한 라이브에 한 번만) */
     private java.util.Set<String> greetedReturning = new java.util.HashSet<>();
     private int tickNo;
+    /** 기존 팬 몫 (0 = 끔) */
+    private int regularEvery;
+    /** 기존 팬 몫을 세는 목소리 차례 수 (진행자가 주제를 정한 차례는 세지 않는다) */
+    private int voiceTurns;
     private int lastBatchSize;
     private int lastCandidates;
     private int lastPool;
@@ -137,6 +141,26 @@ public class LiveRoom {
     }
 
     /** 화면 데모용: 이름을 부르는 대신 채팅을 되읽는 대사를 섞는다 (시뮬레이션은 끈 채로) */
+    /**
+     * 기존 팬 몫: 목소리 차례 every번에 한 번은 "이미 아는 팬"(이번 라이브에서 목소리로 불렸거나 지난 라이브에 온 팬)의
+     * 채팅에서만 고른다. 공정 점수만 쓰면 처음 온 팬(+60)이 늘 이겨서, 한 번 불린 단골은 다시 목소리로 불리기 어렵다.
+     * 0이면 끔 (기본값, README·이력서 숫자는 0 기준)
+     */
+    public void setRegularEvery(int every) {
+        lock.lock();
+        try {
+            this.regularEvery = Math.max(0, every);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 잠금 안에서만 부른다 */
+    private boolean isKnownFan(String viewerId) {
+        FanLedger.Fan f = ledger.get(viewerId);
+        return (f != null && f.reactedCount > 0) || prevChatters.contains(viewerId);
+    }
+
     public void setEchoStyle(boolean echo) {
         lock.lock();
         try {
@@ -230,6 +254,16 @@ public class LiveRoom {
                     List<Chat> ff = voiceFresh.stream().filter(prefer).toList();
                     // A/B 규칙은 fresh만 보므로, 맞는 채팅이 이번 틱에 없으면 pool에서 가져온다
                     voiceFresh = new ArrayList<>(ff.isEmpty() ? pf : ff);
+                }
+            }
+            // 기존 팬 몫: every번째 목소리 차례는 아는 팬의 채팅에서만 (없으면 평소대로).
+            // focused로 표시하지 않는다 — 단골에겐 기억·"또 와 줬네요"를 꺼내는 게 오히려 맞다
+            if (!focused && regularEvery > 0 && !voicePool.isEmpty() && ++voiceTurns % regularEvery == 0) {
+                List<Chat> known = voicePool.stream().filter(c -> isKnownFan(c.viewerId())).toList();
+                if (!known.isEmpty()) {
+                    List<Chat> kf = voiceFresh.stream().filter(c -> isKnownFan(c.viewerId())).toList();
+                    voicePool = new ArrayList<>(known);
+                    voiceFresh = new ArrayList<>(kf.isEmpty() ? known : kf);
                 }
             }
             List<Chat> picked = rule.pick(new PickRule.Context(voiceFresh, voicePool, ledger, k, rnd, nowMs));
@@ -541,6 +575,7 @@ public class LiveRoom {
         recalls = 0;
         groupMoments = 0;
         tickNo = 0;
+        voiceTurns = 0;
         lastBatchSize = 0;
         lastCandidates = 0;
         lastPool = 0;
