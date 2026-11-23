@@ -89,14 +89,24 @@ public class Director {
             return false;
         }
 
+        /**
+         * 이야기 중 고른 채팅에 붙일 대사. 키워드가 맞으면 맞춤 받아치기, 웃음·감탄 반응이면 이야기를 이어 가는 예비 대사,
+         * 이야기와 상관없는 채팅이면 null (= 평소 대사로 그 채팅에 답한다).
+         * 이야기에 반응한 채팅이 없으면 진행자가 아무 채팅이나 고르는데, 예전엔 그때도 이야기 대사를 붙여
+         * "오늘 저녁 메뉴 추천해줘?"에 자동문 이야기로 답했다 (2026-11-23 녹화에서 발견, EpisodeReplyTest)
+         */
         public String replyFor(String chatText, String nickname) {
             String quote = chatText.length() <= 16 ? "\"" + chatText.strip() + "\" " : nickname + "님, ";
             for (FollowUp f : followUps) {
                 if (f.matches(chatText)) return quote + f.reply();
             }
-            return quote + fallbackReply;
+            return REACTION.matcher(chatText).find() ? quote + fallbackReply : null;
         }
     }
+
+    /** 이야기에 대한 웃음·감탄 반응 (이야기 내용과 상관없이 붙여도 어색하지 않은 채팅) */
+    static final java.util.regex.Pattern REACTION =
+            java.util.regex.Pattern.compile("ㅋㅋ|ㅎㅎ|ㅠㅠ|ㄷㄷ|귀여|대박|헐|웃겨|웃기|진짜\\?|레전드");
 
     public record Plan(Kind kind, Question question, Predicate<Chat> prefer, String preface) {
     }

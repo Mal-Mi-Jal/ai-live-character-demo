@@ -543,7 +543,8 @@ public class LiveService {
             List<LiveRoom.Reaction> out = new ArrayList<>();
             for (LiveRoom.Reaction x : rs) {
                 String reply = ep.replyFor(x.chatText(), x.nickname());
-                out.add(x.withLine(reply, LineWriter.Emotion.HAPPY, "template"));
+                // 이야기와 상관없는 채팅이면 평소 대사 그대로 (예전엔 이야기 대사를 무조건 붙였음)
+                out.add(reply != null ? x.withLine(reply, LineWriter.Emotion.HAPPY, "template") : x);
             }
             return out;
         }
