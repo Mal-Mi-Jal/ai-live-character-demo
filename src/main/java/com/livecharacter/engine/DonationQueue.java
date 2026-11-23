@@ -47,7 +47,7 @@ public class DonationQueue {
     private static final List<String> THANKS = List.of(
             "{nick}님 {amt} 선물 감사합니다~",
             "와, {nick}님 {amt}! 고마워요~",
-            "{nick}님 {amt} 후원 감사함 해요!");
+            "{nick}님 {amt} 후원 정말 고마워요!");
     private static final String BIG_EXTRA = " 꼬리별이 막 흔들려요!";
 
     private final ArrayDeque<Donation> queue = new ArrayDeque<>();
@@ -139,19 +139,19 @@ public class DonationQueue {
         if (message == null || message.isBlank()) return null;
         int v = Math.floorMod(turn, 2);
         for (String w : PRAISE) {
-            if (message.contains(w)) return v == 0 ? "그 말 들으니까 꼬리별이 막 흔들려요!" : "솔라 진짜 힘남 해요!";
+            if (message.contains(w)) return v == 0 ? "그 말 들으니까 꼬리별이 막 흔들려요!" : "우와, 솔라 별빛 에너지 풀충전이에요!";
         }
         for (String w : CELEBRATE) {
-            if (message.contains(w)) return v == 0 ? "축하해요! 솔라도 같이 기뻐요." : "와, 축하해요! 오늘 좋은 날이네요.";
+            if (message.contains(w)) return v == 0 ? "축하해요! 솔라도 같이 기뻐요." : "와, 축하해요! 오늘 반짝이는 날이네요.";
         }
         LineWriter.Detected d = LineWriter.detect(message, 0);
         String kw = d.keyword();
         return switch (d.topic()) {
-            case FOOD -> v == 0 ? kw + " 맛있었어요? 부러움!" : kw + "! 솔라도 언젠가 먹어 볼래요.";
-            case GAME -> v == 0 ? kw + " 이기면 자랑하러 와요!" : kw + " 같이 구경하고 싶음 해요!";
-            case TIRED -> v == 0 ? "오늘 푹 쉬어요. 토닥토닥." : "피곤할 땐 쉬어 가요, 솔라가 지켜 줄게요.";
-            case GREETING -> v == 0 ? "와 줘서 반가워요!" : "솔라도 반가움 많이 해요!";
-            case QUESTION -> v == 0 ? "그 질문은… 비밀이에요, 히히." : "음, 솔라 별 머리로 생각해 볼게요!";
+            case FOOD -> v == 0 ? kw + " 맛있었어요? 어떤 맛인지 궁금해요!" : kw + "! 솔라도 언젠가 구경해 볼래요.";
+            case GAME -> v == 0 ? kw + " 이기면 자랑하러 와요!" : kw + " 옆에서 같이 구경하고 싶어요!";
+            case TIRED -> v == 0 ? "오늘 푹 쉬어요. 토닥토닥." : "피곤할 땐 쉬어 가요, 솔라가 옆에서 반짝일게요.";
+            case GREETING -> v == 0 ? "와 줘서 반가워요!" : "오늘도 같이 놀아 줘서 고마워요!";
+            case QUESTION -> v == 0 ? "그 질문은… 별빛 비밀이에요, 히히." : "음, 솔라 별 머리로 생각해 볼게요!";
             // 무슨 말인지 코드가 확신하지 못하면 아는 척하지 않고 감사만 한다 (예: "시험 끝났다!"에 "그 말 오래 기억할게요!"가 나가서 어색했다)
             default -> null;
         };

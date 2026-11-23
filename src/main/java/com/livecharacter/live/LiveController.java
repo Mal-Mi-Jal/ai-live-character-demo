@@ -13,7 +13,7 @@ public class LiveController {
     public record DonateIn(String viewerId, String nickname, Integer amount, String text) {
     }
 
-    public record ControlIn(String rule, Integer bots, Boolean nextLive) {
+    public record ControlIn(String rule, Integer bots, Boolean nextLive, String trigger) {
     }
 
     private final LiveService live;
@@ -35,6 +35,7 @@ public class LiveController {
     @MessageMapping("/control")
     public void control(ControlIn in) {
         if (Boolean.TRUE.equals(in.nextLive())) live.nextLive();
+        else if (in.trigger() != null && !in.trigger().isBlank()) live.triggerCorner(in.trigger());
         else live.control(in.rule(), in.bots());
     }
 

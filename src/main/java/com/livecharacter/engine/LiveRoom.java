@@ -488,7 +488,7 @@ public class LiveRoom {
     public static final String RETURNING = "지난 라이브";
     private static final List<String> RETURNING_LINES = List.of(
             "{nick}님 또 와 줬네요! 진짜 반가워요!",
-            "{nick}님 지난 라이브에도 왔죠? 솔라 기억함 해요!",
+            "{nick}님 지난 라이브에도 왔죠? 솔라 다 기억해요!",
             "{nick}님 다시 만났다! 꼬리별 흔들흔들!");
 
     /**

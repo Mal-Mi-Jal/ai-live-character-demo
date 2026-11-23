@@ -3,6 +3,7 @@ package com.livecharacter.live;
 import com.livecharacter.engine.Chat;
 import com.livecharacter.engine.Director;
 import com.livecharacter.engine.DonationQueue;
+import com.livecharacter.engine.LineWriter;
 import com.livecharacter.engine.LiveRoom;
 import com.livecharacter.engine.PickRule;
 import com.livecharacter.llm.HaikuLineWriter;
@@ -19,24 +20,25 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /**
- * 순수 Java 엔진(LiveRoom, BotAudience)을 실제 시계에 물려 돌리고, 결과를 STOMP로 내보낸다.
- * 스프링 비유: 엔진 = 도메인 서비스, 이 클래스 = 스케줄러 + 메시지 발행 어댑터.
+ * 순수 Java 엔진(LiveRoom, BotAudience, Director)을 실제 시계에 물려 돌리고, 결과를 STOMP로 내보낸다.
  *
- * 음성 기준 진행: 캐릭터 입은 하나라서 "한 명 고르기 → 대사 만들기 → 그 대사를 읽는 시간만큼 기다리기 → 다음 차례".
- *  - 목소리로 이름을 부르는 건 한 차례에 1명, 같은 순서로 다음 몇 명은 화면에 "봤어요 ❤"로만 띄운다
- *  - groupEvery 차례마다 한 번은 같은 이야기를 한 여러 명을 한 줄로 알아본다 (묶음 인정)
- *  - 읽는 시간 = 글자 수 / 초당 글자 수 (Windows 한국어 음성 실측 5.7자)
+ * 음성 동기화 개선:
+ *  - 대사를 브로드캐스트하기 전에 백엔드 TtsService.prepare()로 mp3를 미리 합성·캐시하고,
+ *    실제 오디오 길이(durationMs)를 speakMs로 내려줘서 음성이 중간에 잘리지 않고 진행 바와 정확히 맞물린다.
+ *  - 방송 준비중(PRE_LIVE) → 시작 인사(OPENING) → 본 방송(LIVE) → 마무리(CLOSING) 단계로 봇 채팅 분위기를 전환한다.
  */
 @Service
 public class LiveService {
 
-    public record ChatView(long seq, String nickname, String text, int gift, boolean human) {
+    public record ChatView(long seq, String viewerId, String nickname, String text, int gift, boolean human, String kind) {
     }
 
     public record StateView(String rule, String ruleLabel, int bots, int screenK, int groupEvery,
@@ -44,33 +46,26 @@ public class LiveService {
                             LiveRoom.ReturnStats returns, LiveRoom.LiveSummary lastLive) {
     }
 
-    /** LLM 대사 현황: 켜졌나, 몇 번 불렀나, 얼마나 걸렸나, 검사에 몇 줄 걸렸나 */
     public record LlmView(boolean enabled, int callsUsed, int maxCalls, long llmP50Ms, long llmP95Ms,
                           long llmLines, long templateLines, Map<String, Long> rejected,
                           long inputTokens, long outputTokens) {
     }
 
-    /** 음성 진행 숫자: 몇 차례 말했나, 1분에 몇 번, 채팅 → 목소리 시작까지 */
     public record VoiceView(int turns, double turnsPerMin, long startP50Ms, long startP95Ms, int groupTurns) {
     }
 
     public record RuleView(String id, String label) {
     }
 
-    /** 후원 읽기 차례. readText = 시스템 목소리(후원 알림), thanks = 캐릭터 감사 인사 */
+    /** 후원 읽기 차례. readMs = 시스템 음성 실제 길이, speakMs = 전체 차례 길이(읽기 + 솔라 감사) */
     public record DonationSpeak(int turn, String kind, List<DonationQueue.Donation> items, String readText,
-                                String thanks, long speakMs, DonationQueue.Stats stats,
+                                String thanks, long readMs, long speakMs, DonationQueue.Stats stats,
                                 List<DonationQueue.Donation> queue, Director.Status topic) {
     }
 
-    /** 후원 대기열 화면용 (새 후원이 들어올 때마다) */
     public record DonationBoard(List<DonationQueue.Donation> queue, DonationQueue.Stats stats) {
     }
 
-    /**
-     * 한 차례 말하기. kind = "fan"(한 명 이름 부르기) 또는 "group"(묶음 인정).
-     * speakMs = 이 대사를 읽는 데 걸리는 시간 (서버가 다음 차례를 이만큼 뒤에 연다)
-     */
     public record SpeakView(int turn, String kind, LiveRoom.Reaction reaction, LiveRoom.GroupMoment group,
                             List<LiveRoom.Ack> screenAcks, long speakMs, long llmMs, LiveRoom.Stats stats,
                             String ruleLabel, int bots, LlmView llm, VoiceView voice, LiveRoom.ReturnStats returns,
@@ -79,27 +74,24 @@ public class LiveService {
 
     private static final Set<Integer> ALLOWED_BOTS = Set.of(0, 100, 300, 1000);
     private static final Pattern VIEWER_ID = Pattern.compile("[A-Za-z0-9-]{8,64}");
-    /** 말할 사람이 없을 때 다시 볼 간격 */
     private static final long IDLE_MS = 1000;
-    /** 대사와 대사 사이 숨 고르기 */
-    private static final long GAP_MS = 400;
+    private static final long GAP_MS = 450;
+    private static final long DONATION_GAP_MS = 350;
 
-    /**
-     * 대사와 대사 사이 정적(채팅을 읽는 시간). 사용자 피드백(2026-11-17): 쉬지 않고 계속 말하니 어색하다.
-     * 종류별로 다르게: 질문 뒤엔 답을 기다리며 길게, 이야기 뒤엔 여운, 짧은 반응 뒤엔 짧게. 길이는 조금씩 흔들어 기계적이지 않게
-     */
     static long pauseAfter(String kind) {
         java.util.concurrent.ThreadLocalRandom r = java.util.concurrent.ThreadLocalRandom.current();
         return switch (kind) {
-            case "ask" -> r.nextLong(3000, 5000);
-            case "answer" -> r.nextLong(1000, 2000);
-            case "talk", "story", "answers", "opening" -> r.nextLong(2000, 4000);
-            default -> r.nextLong(1500, 3500);
+            case "ask", "balance_start" -> r.nextLong(2600, 4000);
+            case "answer" -> r.nextLong(1100, 1900);
+            case "episode" -> r.nextLong(2200, 3200);
+            case "talk", "story", "answers", "opening", "balance_end", "episode_end" -> r.nextLong(2000, 3400);
+            default -> r.nextLong(1500, 2800);
         };
     }
 
     private final SimpMessagingTemplate template;
     private final HaikuLineWriter llm;
+    private final TtsService tts;
     private final long llmTimeoutMs;
     private final double charsPerSec;
     private final int screenK;
@@ -108,15 +100,12 @@ public class LiveService {
     private final int botStepMs;
     private final long seed;
 
-    // LLM·음성 숫자 (여러 스레드에서 갱신하므로 이 객체로 동기화)
     private final Object statsLock = new Object();
     private final List<Long> llmTimes = new ArrayList<>();
     private final Map<String, Long> rejected = new LinkedHashMap<>();
     private long llmLines, templateLines, inTokens, outTokens;
     private final List<Long> voiceStarts = new ArrayList<>();
-    /** 최근에 말한 대사 (이어 말하기에서 같은 표현을 되풀이하지 않게 LLM에 넘긴다) */
     private final java.util.ArrayDeque<String> recentLines = new java.util.ArrayDeque<>();
-    /** 최근 이어 말하기 대사 (이어 말하기는 1분에 한 번쯤이라 위 5줄에는 거의 안 남는다 → 따로 기억) */
     private final java.util.ArrayDeque<String> recentTalks = new java.util.ArrayDeque<>();
     private int turns, groupTurns;
     private long voiceSince = System.currentTimeMillis();
@@ -125,23 +114,19 @@ public class LiveService {
     private volatile BotAudience audience;
     private volatile PickRule rule = PickRule.FAIR;
     private volatile LiveRoom.LiveSummary lastLive;
-    /** 다음 차례에 무엇을 할지 정하는 진행자 (떡밥 → 질문 → 답 모으기 → 정리 → 주제 이어 가기) */
     private volatile Director director = new Director();
-    /** 후원 대기열 (라이브마다 새로) */
     private volatile DonationQueue donations = new DonationQueue();
-    /** 채팅창에 띄울 후원 채팅 (후원은 방의 일반 채팅 후보로 넣지 않는다 — 감사는 대기열이 맡음) */
     private final List<ChatView> donationChats = new ArrayList<>();
     private boolean donationsChanged;
     private long donationSeq;
-    /** 마지막 후원 차례 뒤로 지난 일반 차례 수. 후원은 3차례에 한 번만 (사용자 피드백 2026-11-17: 후원만 읽고 채팅은 안 읽는다) */
     private volatile int turnsSinceDonation = 99;
     private static final int DONATION_EVERY = 3;
     private final double botGiftScale;
-    /** 다음 라이브 첫 차례에 말할 오프닝 (지난 라이브 요약) */
     private volatile String pendingOpening;
     private ScheduledExecutorService scheduler;
+    private ExecutorService ttsPool;
 
-    public LiveService(SimpMessagingTemplate template, HaikuLineWriter llm,
+    public LiveService(SimpMessagingTemplate template, HaikuLineWriter llm, TtsService tts,
                        @Value("${live.llm-timeout-ms}") long llmTimeoutMs,
                        @Value("${live.voice-chars-per-sec}") double charsPerSec,
                        @Value("${live.screen-acks}") int screenK,
@@ -155,6 +140,7 @@ public class LiveService {
                        @Value("${live.regular-every:0}") int regularEvery) {
         this.template = template;
         this.llm = llm;
+        this.tts = tts;
         this.llmTimeoutMs = llmTimeoutMs;
         this.charsPerSec = charsPerSec;
         this.screenK = screenK;
@@ -163,27 +149,34 @@ public class LiveService {
         this.botStepMs = botStepMs;
         this.seed = seed;
         this.room = new LiveRoom(rule, 1, screenK, voiceMaxAgeMs, seed);
-        room.setEchoStyle(true); // 화면 데모: 이름 부르기와 채팅 되읽기를 섞는다
-        room.setRegularEvery(regularEvery); // 기존 팬 몫 (기본 0 = 끔, RegularSlotTest 참고)
+        room.setEchoStyle(true);
+        room.setRegularEvery(regularEvery);
+        director.setShowHostMode(true);
         this.botGiftScale = botGiftScale;
-        this.audience = new BotAudience(bots, seed, botGiftScale);
+        this.audience = new BotAudience(bots, seed, botGiftScale, true);
+        this.audience.setPhase(BotAudience.Phase.PRE_LIVE);
     }
 
     @PostConstruct
     void start() {
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "live-loop"));
+        ttsPool = Executors.newFixedThreadPool(3, r -> {
+            Thread t = new Thread(r, "tts-prep");
+            t.setDaemon(true);
+            return t;
+        });
         scheduler.scheduleAtFixedRate(guard(this::botStep), botStepMs, botStepMs, TimeUnit.MILLISECONDS);
         scheduler.scheduleAtFixedRate(guard(this::flushChat), chatFlushMs, chatFlushMs, TimeUnit.MILLISECONDS);
-        director.startLive(System.currentTimeMillis() + 3000, false);
-        scheduleTurn(3000);
+        director.startLive(System.currentTimeMillis() + 3500, false);
+        scheduleTurn(3500);
     }
 
     @PreDestroy
     void stop() {
         if (scheduler != null) scheduler.shutdownNow();
+        if (ttsPool != null) ttsPool.shutdownNow();
     }
 
-    /** 예약 작업에서 예외가 한 번 나면 그 작업은 조용히 멈춘다 → 잡아서 로그만 남기고 계속 돈다 */
     private static Runnable guard(Runnable r) {
         return () -> {
             try {
@@ -195,32 +188,42 @@ public class LiveService {
     }
 
     private void scheduleTurn(long delayMs) {
-        if (scheduler.isShutdown()) return;
+        if (scheduler == null || scheduler.isShutdown()) return;
         scheduler.schedule(() -> {
             try {
                 turn();
             } catch (RuntimeException e) {
                 System.err.println("[live-loop] " + e);
-                scheduleTurn(IDLE_MS); // 한 번 실패해도 진행이 멈추지 않게
+                scheduleTurn(IDLE_MS);
             }
         }, delayMs, TimeUnit.MILLISECONDS);
     }
 
     private void botStep() {
         long now = System.currentTimeMillis();
+        // 오프닝이 끝나면 봇 단계를 자연스럽게 LIVE로 전환
+        if (audience.phase() == BotAudience.Phase.OPENING && !director.inOpening(now)) {
+            audience.setPhase(BotAudience.Phase.LIVE);
+        }
         for (BotAudience.Sent s : audience.step(botStepMs)) {
             if (s.gift() > 0) donate(s.bot().id(), s.bot().nickname(), s.gift(), s.text(), false, now);
             else room.receive(s.bot().id(), s.bot().nickname(), s.text(), 0, now, false);
         }
     }
 
-    /** 후원: 대기열에 넣고, 채팅창에도 강조해서 띄운다 */
     private void donate(String viewerId, String nickname, int amount, String text, boolean human, long now) {
         DonationQueue.Donation d = donations.offer(viewerId, nickname, amount, text, human, now);
+        String kind = viewerKind(viewerId, human);
         synchronized (donationChats) {
-            donationChats.add(new ChatView(-(++donationSeq), d.nickname(), d.message() == null ? "" : d.message(), amount, human));
+            donationChats.add(new ChatView(-(++donationSeq), viewerId, d.nickname(), d.message() == null ? "" : d.message(), amount, human, kind));
             donationsChanged = true;
         }
+    }
+
+    private String viewerKind(String viewerId, boolean human) {
+        if (human) return "HUMAN";
+        BotAudience.Kind k = audience.kindOf(viewerId);
+        return k == null ? "NORMAL" : k.name();
     }
 
     public void humanDonate(String viewerId, String nickname, Integer amount, String text) {
@@ -241,28 +244,45 @@ public class LiveService {
             donationsChanged = false;
         }
         if (changed) template.convertAndSend("/topic/donations", new DonationBoard(donations.snapshot(), donations.stats()));
+        if (director.activeBalance() != null) {
+            template.convertAndSend("/topic/topic", director.status(System.currentTimeMillis(), room.recentChats()));
+        }
         List<Chat> chats = room.takeUnflushed();
         if (chats.isEmpty() && extra.isEmpty()) return;
-        // 화면에는 최근 것만 보이면 된다. 1000명일 때 0.5초 묶음이 수십 개라도 한 메시지로 간다
         List<ChatView> view = chats.stream()
                 .skip(Math.max(0, chats.size() - 60))
-                .map(c -> new ChatView(c.seq(), c.nickname(), c.text(), c.gift(), c.human()))
+                .map(c -> new ChatView(c.seq(), c.viewerId(), c.nickname(), c.text(), c.gift(), c.human(), viewerKind(c.viewerId(), c.human())))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         view.addAll(extra);
         template.convertAndSend("/topic/chat", view);
     }
 
-    long speakMs(String line) {
+    long estimateSpeakMs(String line) {
         return Math.round(line.length() / charsPerSec * 1000) + GAP_MS;
     }
 
-    /** 한 차례: 묶음 인정 차례면 묶음, 아니면 한 명 + 화면 인정. 다 말하고 나면 다음 차례를 예약한다 */
+    /** TTS를 미리 합성·캐시하고 실제 mp3 길이에 여유 버퍼(450ms)를 더해 반환한다 */
+    private long prepareAudioMs(String line, String role, String emotion) {
+        if (line == null || line.isBlank()) return 0;
+        TtsService.Prepared p = tts.prepare(line, role, emotion);
+        return p != null ? p.durationMs() + GAP_MS : estimateSpeakMs(line);
+    }
+
+    private static String emotionForSpecial(String kind) {
+        return switch (kind) {
+            case "ask" -> "THINKING";
+            case "answers", "group", "balance_start", "balance_mid", "episode" -> "EXCITED";
+            case "opening", "closing" -> "TOUCHED";
+            case "story" -> "CALM";
+            default -> "HAPPY";
+        };
+    }
+
     private void turn() {
         long now = System.currentTimeMillis();
         String ruleLabel = rule.label();
         int bots = audience.bots().size();
         if (switchPending) {
-            // 마무리 인사를 마쳤으면 여기서 다음 라이브로 바꾼다 (차례 번호도 새로 센다)
             switchPending = false;
             switchLive();
         }
@@ -273,6 +293,7 @@ public class LiveService {
         if (endRequested) {
             endRequested = false;
             switchPending = true;
+            audience.setPhase(BotAudience.Phase.CLOSING);
             int fans = room.stats().chatters();
             String closing = "오늘 방송은 여기까지! 와 준 " + fans + "명 다 고마워요. 다음 라이브에서 또 만나요!";
             speakSpecial(turnNo, "closing", new LiveRoom.GroupMoment("마무리", fans, List.of(), closing), ruleLabel, bots);
@@ -281,22 +302,14 @@ public class LiveService {
         String opening = pendingOpening;
         if (opening != null) {
             pendingOpening = null;
-            long ms = speakMs(opening);
-            cheerFor("opening");
-            synchronized (statsLock) {
-                turns++;
-            }
+            audience.setPhase(BotAudience.Phase.OPENING);
             LiveRoom.LiveSummary s = lastLive;
             LiveRoom.GroupMoment g = new LiveRoom.GroupMoment(s.topLabel() == null ? "지난 라이브" : s.topLabel(),
                     s.topCount(), List.of(), opening);
-            template.convertAndSend("/topic/speak", new SpeakView(turnNo, "opening", null, g, List.of(),
-                    ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
-            scheduleTurn(ms + pauseAfter("opening"));
+            speakSpecial(turnNo, "opening", g, ruleLabel, bots);
             return;
         }
         Director d = director;
-        // 후원: 떡밥 구간이 아니면 한 차례씩 번갈아 읽는다 (일반 채팅 차례를 다 빼앗지 않게).
-        // 떡밥 구간 중이면 보류, 너무 쌓이면 메시지를 건너뛰고 한 줄로 묶어 감사
         DonationQueue.Plan dp = donations.next(now, d.inSegment(), turnsSinceDonation >= DONATION_EVERY - 1);
         if (dp.kind() != DonationQueue.Kind.NONE) {
             turnsSinceDonation = 0;
@@ -307,19 +320,58 @@ public class LiveService {
         boolean groupTurn = groupEvery > 0 && turnNo % groupEvery == 0;
         Director.Plan plan = d.next(now, room.hotTopics(now), groupTurn);
 
+        if (plan.kind() == Director.Kind.BALANCE_START) {
+            audience.setPhase(BotAudience.Phase.LIVE);
+            Director.StartedBalance sb = d.startBalance(now, room.recentChats());
+            audience.answering(sb.game().allBotChats());
+            List<String> mentions = sb.triggerNick() == null ? List.of() : List.of(sb.triggerNick());
+            speakSpecial(turnNo, "balance_start", new LiveRoom.GroupMoment(sb.game().title(), 0, mentions, sb.introLine()), ruleLabel, bots);
+            return;
+        }
+        if (plan.kind() == Director.Kind.BALANCE_MID) {
+            String midLine = d.balanceMidLine(room.recentChats());
+            Director.BalanceGame bg = d.activeBalance();
+            speakSpecial(turnNo, "balance_mid", new LiveRoom.GroupMoment(bg == null ? "밸런스 게임" : bg.title(), 0, List.of(), midLine), ruleLabel, bots);
+            return;
+        }
+        if (plan.kind() == Director.Kind.BALANCE_END) {
+            Director.BalanceResult br = d.finishBalance(room.recentChats(), now);
+            audience.answering(null);
+            room.ackAnswers(br.voters());
+            String label = br.game().optionA() + " " + br.countA() + " vs " + br.game().optionB() + " " + br.countB();
+            speakSpecial(turnNo, "balance_end", new LiveRoom.GroupMoment(label, br.voters().size(), List.of(), br.line()), ruleLabel, bots);
+            return;
+        }
+        if (plan.kind() == Director.Kind.EPISODE_START) {
+            audience.setPhase(BotAudience.Phase.LIVE);
+            Director.Episode ep = d.startEpisode(now);
+            speakSpecial(turnNo, "episode", new LiveRoom.GroupMoment(ep.title(), 0, List.of(), ep.part1()), ruleLabel, bots);
+            audience.cheer(ep.cheers1(), 0.78, 18_000);
+            return;
+        }
+        if (plan.kind() == Director.Kind.EPISODE_END) {
+            Director.Episode ep = d.finishEpisode();
+            if (ep != null) {
+                speakSpecial(turnNo, "episode_end", new LiveRoom.GroupMoment(ep.title(), 0, List.of(), ep.part2()), ruleLabel, bots);
+                audience.cheer(ep.cheers2(), 0.6, 10_000);
+                return;
+            }
+        }
         if (plan.kind() == Director.Kind.ASK) {
+            audience.setPhase(BotAudience.Phase.LIVE);
             String line = d.startAsk(plan.question(), plan.preface(), now);
-            audience.answering(plan.question().botAnswers()); // 데모 봇도 질문에 답하게
+            audience.answeringQuestion(plan.question().id(), plan.question().botAnswers());
             speakSpecial(turnNo, "ask", new LiveRoom.GroupMoment(plan.question().label(), 0, List.of(), line), ruleLabel, bots);
             return;
         }
         if (plan.kind() == Director.Kind.ANSWERS) {
             Director.Answers a = d.finishAsk(room.recentChats(), room.voiceCalled(), now);
             audience.answering(null);
-            room.ackAnswers(a.answerers()); // 답한 팬은 "답 모아 반응"으로 함께 인정
+            room.ackAnswers(a.answerers());
             String label = a.counts().entrySet().stream().map(e -> e.getKey() + " " + e.getValue())
                     .reduce((x, y) -> x + " · " + y).orElse("답 없음");
-            speakSpecial(turnNo, "answers", new LiveRoom.GroupMoment(label, a.total(), List.of(), a.line()), ruleLabel, bots);
+            List<String> mentions = a.highlightNick() == null ? List.of() : List.of(a.highlightNick());
+            speakSpecial(turnNo, "answers", new LiveRoom.GroupMoment(label, a.total(), mentions, a.line()), ruleLabel, bots);
             return;
         }
         if (plan.kind() == Director.Kind.TALK) {
@@ -331,9 +383,8 @@ public class LiveService {
                 recent = List.copyOf(recentLines);
                 talks = List.copyOf(recentTalks);
             }
-            // LLM은 잠금 밖, 스케줄러 스레드 밖. 늦으면 템플릿
             llm.talk(talk, recent, others, talks)
-                    .completeOnTimeout(new HaikuLineWriter.TalkResult(talk.templateLine(), com.livecharacter.engine.LineWriter.Emotion.HAPPY,
+                    .completeOnTimeout(new HaikuLineWriter.TalkResult(talk.templateLine(), LineWriter.Emotion.HAPPY,
                             "template", true, llmTimeoutMs, "시간 초과", null, 0, 0), llmTimeoutMs, TimeUnit.MILLISECONDS)
                     .thenAccept(res -> {
                         recordTalk(res);
@@ -348,17 +399,17 @@ public class LiveService {
             return;
         }
         if (plan.kind() == Director.Kind.HELLO) {
+            audience.setPhase(BotAudience.Phase.OPENING);
             speakSpecial(turnNo, "hello", new LiveRoom.GroupMoment("인사", 0, List.of(), plan.preface()), ruleLabel, bots);
             return;
         }
         if (plan.kind() == Director.Kind.STORY) {
-            // 솔라가 먼저 자기 이야기 한 줄 (템플릿, 설정표 바탕)
-            String line = d.storyLine();
-            speakSpecial(turnNo, "story", new LiveRoom.GroupMoment("솔라 이야기", 0, List.of(), line), ruleLabel, bots);
+            Director.Story story = d.nextStory();
+            speakSpecial(turnNo, "story", new LiveRoom.GroupMoment("솔라 이야기", 0, List.of(), story.line()), ruleLabel, bots);
+            audience.cheer(story.cheers(), 0.55, 10_000);
             return;
         }
         if (plan.kind() == Director.Kind.GROUP) {
-            // 인사 묶음은 빼고, 같은 주제는 3분 안에 다시 묶지 않는다 (같은 말 되풀이로 정적이던 문제)
             LiveRoom.GroupMoment g = room.groupMoment(now, 180_000, true);
             if (g != null) {
                 synchronized (statsLock) {
@@ -368,79 +419,90 @@ public class LiveService {
                 return;
             }
         }
+
         LiveRoom.TickResult r = room.tick(now, plan.prefer());
         if (r.reactions().isEmpty()) {
             scheduleTurn(IDLE_MS);
             return;
         }
-        List<LiveRoom.Reaction> reactions = answerLines(r.reactions(), d.active());
-        // LLM은 방 잠금 밖, 스케줄러 스레드 밖에서 부른다. 늦으면 템플릿 대사가 나간다
+        // 진행 중인 코너(에피소드 티키타카 / 밸런스 게임 유도 / 질문 답)에 맞춘 맥락형 대사로 교체
+        List<LiveRoom.Reaction> reactions = contextualLines(r.reactions(), d);
         llm.rewrite(reactions)
                 .completeOnTimeout(new HaikuLineWriter.Result(reactions, true, llmTimeoutMs,
                         List.of("시간 초과"), 0, 0), llmTimeoutMs, TimeUnit.MILLISECONDS)
-                .thenAccept(res -> {
+                .thenAcceptAsync(res -> {
                     LiveRoom.Reaction x = res.reactions().get(0);
                     long llmMs = res.called() ? res.llmMs() : 0;
-                    long ms = speakMs(x.line());
+                    long ms = prepareAudioMs(x.line(), "solar", x.emotion().name());
                     synchronized (statsLock) {
                         turns++;
                         remember(x.line());
-                        // 채팅 → 목소리 시작 = 고르기까지 기다린 시간 + 대사 만드는 시간
                         voiceStarts.add(x.waitMs() + (System.currentTimeMillis() - now));
                     }
                     record(res);
-                    // 질문 답을 모으는 중이면 정적을 짧게 해서 답을 여러 개 읽어 준다
-                    long pause = pauseAfter(director.active() != null ? "answer" : "fan");
+                    long pause = pauseAfter(d.active() != null || d.activeBalance() != null || d.activeEpisode() != null ? "answer" : "fan");
                     template.convertAndSend("/topic/speak", new SpeakView(turnNo, "fan", x, null, r.screenAcks(),
-                            ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(), director.status(System.currentTimeMillis())));
+                            ms, llmMs, r.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(),
+                            d.status(System.currentTimeMillis(), room.recentChats())));
                     scheduleTurn(ms + pause);
-                });
+                }, ttsPool);
     }
 
-    private static final List<String> CHEER_HELLO = List.of("안녕 솔라!", "하이하이", "솔라 왔다!", "오늘도 반가워요", "ㅎㅇㅎㅇ", "처음 왔어요!");
-    private static final List<String> CHEER_REACT = List.of("ㅋㅋㅋㅋ", "귀여워", "솔라 최고", "ㅠㅠ 공감", "와 진짜?", "ㅋㅋㅋ 솔라답다");
-    private static final List<String> CHEER_BIG = List.of("오 만원!", "큰손 등장", "ㄷㄷ 만원", "멋지다");
-    private static final List<String> CHEER_BYE = List.of("수고했어요!", "잘 자 솔라", "다음에 또 올게요", "오늘 재밌었어요", "빠이빠이");
+    private static final List<String> CHEER_HELLO = List.of("안녕 솔라!", "하이하이~", "솔라 왔다!", "오늘도 반가워요", "ㅎㅇㅎㅇ", "별빛 라디오 출석!");
+    private static final List<String> CHEER_REACT = List.of("ㅋㅋㅋㅋ", "귀여워ㅠㅠ", "솔라 최고", "오 진짜?", "ㅋㅋㅋ 솔라답다", "나도 그거!");
+    private static final List<String> CHEER_ANSWERS = List.of("오 1등이 이거네ㅋㅋ", "역시ㅋㅋㅋ", "나도 그거였는데!", "솔라 집계 귀엽다", "오 박빙이네ㅋㅋ");
+    private static final List<String> CHEER_BIG = List.of("오 만원 ㄷㄷ", "큰손님 등장!", "와 통 크시다", "꼬리별 날아가겠다ㅋㅋ");
+    private static final List<String> CHEER_BYE = List.of("수고했어요!", "잘 자 솔라~", "다음에 또 올게요", "오늘 재밌었어요!", "빠이빠이 반짝!");
 
-    /** 방송 흐름에 맞춰 봇 채팅이 잠깐 따라오게 한다 (화면 데모용) */
     private void cheerFor(String kind) {
         switch (kind) {
-            case "hello", "opening" -> audience.cheer(CHEER_HELLO, 0.5, 25_000);
-            case "story", "talk", "answers" -> audience.cheer(CHEER_REACT, 0.35, 8_000);
-            case "closing" -> audience.cheer(CHEER_BYE, 0.6, 15_000);
+            case "hello", "opening" -> audience.cheer(CHEER_HELLO, 0.65, 20_000);
+            case "answers", "balance_end" -> audience.cheer(CHEER_ANSWERS, 0.45, 8_000);
+            case "talk" -> audience.cheer(CHEER_REACT, 0.35, 8_000);
+            case "closing" -> audience.cheer(CHEER_BYE, 0.7, 15_000);
             default -> {
             }
         }
     }
 
     private void speakDonation(int turnNo, DonationQueue.Plan dp) {
-        if (dp.items().stream().anyMatch(x -> x.amount() >= DonationQueue.BIG_AT)) audience.cheer(CHEER_BIG, 0.3, 6_000);
-        long ms = (dp.readText() == null ? 0 : speakMs(dp.readText())) + speakMs(dp.thanks());
-        synchronized (statsLock) {
-            turns++;
-            remember(dp.thanks());
-        }
-        template.convertAndSend("/topic/donation-speak", new DonationSpeak(turnNo, dp.kind().name(), dp.items(),
-                dp.readText(), dp.thanks(), ms, donations.stats(), donations.snapshot(),
-                director.status(System.currentTimeMillis())));
-        scheduleTurn(ms + pauseAfter("donation"));
+        if (dp.items().stream().anyMatch(x -> x.amount() >= DonationQueue.BIG_AT)) audience.cheer(CHEER_BIG, 0.4, 7_000);
+        CompletableFuture<Long> readFut = dp.readText() == null
+                ? CompletableFuture.completedFuture(0L)
+                : CompletableFuture.supplyAsync(() -> prepareAudioMs(dp.readText(), "system", "HAPPY"), ttsPool);
+        CompletableFuture<Long> thanksFut = CompletableFuture.supplyAsync(
+                () -> prepareAudioMs(dp.thanks(), "solar", "TOUCHED"), ttsPool);
+
+        readFut.thenCombine(thanksFut, (readMs, thanksMs) -> {
+            long totalMs = (readMs > 0 ? readMs + DONATION_GAP_MS : 0) + thanksMs + 250;
+            synchronized (statsLock) {
+                turns++;
+                remember(dp.thanks());
+            }
+            template.convertAndSend("/topic/donation-speak", new DonationSpeak(turnNo, dp.kind().name(), dp.items(),
+                    dp.readText(), dp.thanks(), readMs, totalMs, donations.stats(), donations.snapshot(),
+                    director.status(System.currentTimeMillis(), room.recentChats())));
+            scheduleTurn(totalMs + pauseAfter("donation"));
+            return null;
+        });
     }
 
-    /** 질문·답 정리·묶음 인정처럼 한 사람에게 하는 말이 아닌 차례 (템플릿, LLM 안 씀) */
     private void speakSpecial(int turnNo, String kind, LiveRoom.GroupMoment g, String ruleLabel, int bots) {
-        long ms = speakMs(g.line());
-        cheerFor(kind);
-        synchronized (statsLock) {
-            turns++;
-            remember(g.line());
-        }
-        template.convertAndSend("/topic/speak", new SpeakView(turnNo, kind, null, g, List.of(),
-                ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(),
-                director.status(System.currentTimeMillis())));
-        scheduleTurn(ms + pauseAfter(kind));
+        String emo = emotionForSpecial(kind);
+        CompletableFuture.supplyAsync(() -> prepareAudioMs(g.line(), "solar", emo), ttsPool)
+                .thenAccept(ms -> {
+                    cheerFor(kind);
+                    synchronized (statsLock) {
+                        turns++;
+                        remember(g.line());
+                    }
+                    template.convertAndSend("/topic/speak", new SpeakView(turnNo, kind, null, g, List.of(),
+                            ms, 0, room.stats(), ruleLabel, bots, llmView(), voiceView(), room.returnStats(),
+                            director.status(System.currentTimeMillis(), room.recentChats())));
+                    scheduleTurn(ms + pauseAfter(kind));
+                });
     }
 
-    /** statsLock 안에서 부른다 */
     private void remember(String line) {
         recentLines.addLast(line);
         while (recentLines.size() > 5) recentLines.pollFirst();
@@ -461,30 +523,56 @@ public class LiveService {
     private int answerTurn;
 
     /**
-     * 질문의 답을 모으는 중이면, 주제 분류가 모르는 답("집에서 쉴래요")도 그 질문의 답 칸으로 반응한다.
-     * 처음엔 이런 답에 "말 들었어요! 고마워요~" 같은 아무 말이 나갔다 (사용자 피드백 2026-11-17).
-     * 음식·게임·피곤처럼 이미 맞는 반응이 있는 주제는 그대로 둔다
+     * 진행 중인 코너에 맞춰 솔라가 맥락 있는 티키타카 대사를 만들도록 보정한다.
+     * 1) 밸런스 게임 중 → A/B 진영 의견에 솔라 본인 취향 + 유도 멘트로 답장
+     * 2) 솔라 에피소드 중 → 시청자의 에피소드 반응에 딱 맞는 티키타카 답장
+     * 3) 질문 코너 중 → 답 칸에 맞는 자연스러운 반응
      */
+    private List<LiveRoom.Reaction> contextualLines(List<LiveRoom.Reaction> rs, Director d) {
+        Director.BalanceGame bg = d.activeBalance();
+        if (bg != null) {
+            List<LiveRoom.Reaction> out = new ArrayList<>();
+            for (LiveRoom.Reaction x : rs) {
+                String reply = d.balanceChatReply(new Chat(0, x.viewerId(), x.nickname(), x.chatText(), x.gift(), 0, x.human()));
+                out.add(reply != null ? x.withLine(reply, LineWriter.Emotion.EXCITED, "template") : x);
+            }
+            return out;
+        }
+        Director.Episode ep = d.activeEpisode();
+        if (ep != null) {
+            List<LiveRoom.Reaction> out = new ArrayList<>();
+            for (LiveRoom.Reaction x : rs) {
+                String reply = ep.replyFor(x.chatText(), x.nickname());
+                out.add(x.withLine(reply, LineWriter.Emotion.HAPPY, "template"));
+            }
+            return out;
+        }
+        return answerLines(rs, d.active());
+    }
+
     private List<LiveRoom.Reaction> answerLines(List<LiveRoom.Reaction> rs, Director.Question q) {
         if (q == null) return rs;
         List<LiveRoom.Reaction> out = new ArrayList<>();
         for (LiveRoom.Reaction x : rs) {
             String bucket = q.bucketOf(x.chatText());
-            boolean generic = x.topic() == com.livecharacter.engine.LineWriter.Topic.OTHER
-                    || x.topic() == com.livecharacter.engine.LineWriter.Topic.GREETING
-                    || x.topic() == com.livecharacter.engine.LineWriter.Topic.QUESTION;
+            boolean generic = x.topic() == LineWriter.Topic.OTHER
+                    || x.topic() == LineWriter.Topic.GREETING
+                    || x.topic() == LineWriter.Topic.QUESTION;
             if (bucket == null || !generic || x.recall() != null) {
                 out.add(x);
                 continue;
             }
             String label = bucket.equals("좋았던 분") ? "좋은 하루" : bucket.equals("피곤한 분") ? "피곤한 하루" : bucket;
             String quote = x.chatText().length() <= 16 ? "\"" + x.chatText() + "\" " : "";
-            String line = switch (answerTurn++ % 3) {
+            String line = switch (answerTurn++ % 6) {
                 case 0 -> quote + label + " 한 표 추가요!";
                 case 1 -> x.nickname() + "님은 " + label + "! 좋다~";
-                default -> quote + "오, " + label + "! 좋아요~";
+                case 2 -> quote + "오, " + label + "! 솔라도 메모했어요~";
+                case 3 -> x.nickname() + "님 " + label + " 픽! 반짝!";
+                case 4 -> quote + label + " 파가 여기 또 있네요!";
+                default -> x.nickname() + "님도 " + label + "이구나! 잘 들었어요~";
             };
-            out.add(x.withLine(line, com.livecharacter.engine.LineWriter.Emotion.EXCITED, "template"));
+            out.add(x.withLine(line, LineWriter.Emotion.EXCITED, "template"));
         }
         return out;
     }
@@ -535,13 +623,6 @@ public class LiveService {
         room.receive("me-" + viewerId, nick, text, 0, System.currentTimeMillis(), true);
     }
 
-    /**
-     * 지금 라이브를 끝내고 다음 라이브를 시작한다. 숫자는 새로 세고 팬 기억은 남는다.
-     * 봇은 같은 봇들이 다시 온다 (데모라서 복귀 여부는 시뮬레이션 테스트 ReturnRateTest에서 따로 본다)
-     */
-    /**
-     * "라이브 끝내고 다음 라이브": 바로 바꾸지 않고, 다음 차례에 마무리 인사를 한 뒤 바꾼다 (실제 방송처럼).
-     */
     public synchronized void nextLive() {
         endRequested = true;
     }
@@ -549,13 +630,18 @@ public class LiveService {
     private volatile boolean endRequested;
     private volatile boolean switchPending;
 
-    /** 마무리 인사를 마친 뒤 실제로 다음 라이브로 바꾼다 */
+    public void triggerCorner(String corner) {
+        director.requestCorner(corner);
+    }
+
     private synchronized void switchLive() {
         lastLive = room.startNextLive();
         donations = new DonationQueue();
         director = new Director();
-        director.startLive(System.currentTimeMillis(), true); // 지난 라이브 요약 오프닝이 인사를 대신한다
+        director.setShowHostMode(true);
+        director.startLive(System.currentTimeMillis(), true);
         audience.answering(null);
+        audience.setPhase(BotAudience.Phase.PRE_LIVE);
         pendingOpening = lastLive.openingLine();
         synchronized (statsLock) {
             voiceStarts.clear();
@@ -566,14 +652,15 @@ public class LiveService {
         template.convertAndSend("/topic/state", state());
     }
 
-    /** 규칙이나 봇 수를 바꾸면 숫자를 처음부터 다시 센다 (LLM 호출 수·비용은 서버를 켠 동안 누적) */
     public synchronized void control(String ruleId, Integer bots) {
         if (ruleId != null) rule = PickRule.byId(ruleId);
-        if (bots != null && ALLOWED_BOTS.contains(bots)) audience = new BotAudience(bots, seed, botGiftScale);
+        if (bots != null && ALLOWED_BOTS.contains(bots)) audience = new BotAudience(bots, seed, botGiftScale, true);
+        audience.setPhase(BotAudience.Phase.PRE_LIVE);
         donations = new DonationQueue();
         room.reset(rule);
         director = new Director();
-        director.startLive(System.currentTimeMillis(), false);
+        director.setShowHostMode(true);
+        director.startLive(System.currentTimeMillis() + 2500, false);
         synchronized (statsLock) {
             voiceStarts.clear();
             turns = 0;

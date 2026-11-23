@@ -48,7 +48,7 @@ class DirectorTest {
         assertThat(d.next(t + Director.ANSWER_MS + 2_000, Map.of(), true).kind()).isEqualTo(Director.Kind.TALK);
         Director.Talk talk = d.talkMaterial(recent, Set.of("a"));
         assertThat(talk.nicknames()).containsExactly("팬c", "팬b"); // 최근 답부터, 김밥(c)·치킨(b) / a는 이미 불림
-        assertThat(talk.templateLine()).isEqualTo("팬c님은 김밥, 팬b님은 치킨! 솔라 별엔 음식이 없어서 다 궁금함 해요.");
+        assertThat(talk.templateLine()).isEqualTo("팬c님은 김밥, 팬b님은 치킨! 솔라 별엔 음식이 없어서 다 궁금해요.");
 
         // 그 뒤 30초는 같은 주제 채팅을 먼저 본다, 다음 질문은 60초 뒤
         Director.Plan after = d.next(t + Director.ANSWER_MS + 5_000, Map.of("치킨", 9), false);
